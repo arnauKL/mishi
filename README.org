@@ -1,0 +1,33 @@
+#+title: Mishi (minishell)
+#+author: Jaume Cladera, Arnau K. Deprez, Matías Volpe
+
+> Sistemes Operatius Curs 2026
+
+* Instalar i compilar
+
+** Requeriments
+
+Per ara cap però farem servir la llibreria ~readline~.
+
+```
+git clone ...
+cd minishell_so
+make
+```
+
+* Característiques
+
+- Comandes internes (builtins)
+    - `cd directori`
+    - `export variable=valor`
+    - `source nom_fitxer`
+    - `jobs`
+    - `fg`
+    - `bg`
+    - `exit`
+- Execució de processos
+	Si l'input no és cap de les comandes internes, s'executarà com a nou procés.
+- Redireccionament
+- Processos en segon pla
+- Finalització (avortament) i suspensió de processos
+
