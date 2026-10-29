@@ -12,10 +12,8 @@ Estam començant `nivell1.c`
 
 ### Requeriments
 
-Per ara cap però farem servir la llibreria ~readline~.
-
 ```
-git clone ...
-cd minishell_so
+git clone https://github.com/arnauKL/mishi
+cd mishi
 make
 ```
