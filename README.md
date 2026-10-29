@@ -1,7 +1,8 @@
-`mishi` (minishell)
+`mishi` (minishell). Pràctica 2 de Sistemes Operatius Curs 2026.
 
-> Sistemes Operatius Curs 2026
 > Estudiants: Jaume Cladera, Arnau K. Deprez, Matías Volpe
+
+
 
 ## Progrés
 
