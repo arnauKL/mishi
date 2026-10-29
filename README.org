@@ -3,6 +3,10 @@
 
 > Sistemes Operatius Curs 2026
 
+* Progrés
+
+Estam començant `nivell1.c`
+
 * Instalar i compilar
 
 ** Requeriments
@@ -30,4 +34,5 @@ make
 - Redireccionament
 - Processos en segon pla
 - Finalització (avortament) i suspensió de processos
+
 
