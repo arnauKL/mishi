@@ -1,13 +1,11 @@
-#include <errno.h>
+#include "config.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-
 #include <sys/wait.h>
-
-#include "constants.h"
+#include <unistd.h>
 
 int execute(char **args);
 int handle_line(char *line);
@@ -19,27 +17,26 @@ void split_line(char *line, char **args);
 void strip_newline(char *line);
 
 /* Builtins */
-int mishi_bg(char **args);
+// int mishi_bg(char **args);
 int mishi_cd(char **args);
 int mishi_exit(char **args);
-int mishi_export(char **args);
-int mishi_fg(char **args);
+// int mishi_export(char **args);
+// int mishi_fg(char **args);
 int mishi_help(char **args); // no feia falta ficar-la però era fàcil d afegir
-int mishi_jobs(char **args);
-int mishi_source(char **args);
+// int mishi_jobs(char **args);
+// int mishi_source(char **args);
 
 struct builtin builtins[] = {
-    {"cd", mishi_cd},
-    {"help", mishi_help},
-    {"exit", mishi_exit},
-    // { "fg", mishi_fg },
-    // { "export", mishi_export },
-    // { "jobs", mishi_jobs },
-    // { "source", mishi_source },
+    { "cd"     , mishi_cd},
+    { "exit"   , mishi_exit},
+    // { "export" , mishi_export },
+    // { "fg"     , mishi_fg },
+    { "help"   , mishi_help},
+    // { "jobs"   , mishi_jobs },
+    // { "source" , mishi_source },
 };
 
-/* A partir de l'array de strings (noms de builtins),
- * retorna nombre de builtins */
+/* A partir de l'array retorna nombre de builtins */
 #define NUM_BUILTINS (sizeof(builtins) / sizeof(builtins[0]))
 
 int main(void) { return mishi_loop(); }
@@ -116,18 +113,35 @@ int mishi_cd(char **args) {
     if (args[1] == NULL) {
         /* cas que ens passen només un param (`cd` tot sol) */
         /* més endavant, jo faria que això vagi al $HOME (posix) */
-        fprintf(stderr, "%s: expected argument to \"cd\"\n", PROGRAM_NAME);
-        return MISHI_ERR;
+        // fprintf(stderr, "%s: expected argument to \"cd\"\n", PROGRAM_NAME);
+        // return MISHI_ERR;
+        if (chdir(getenv("HOME")) != 0) {
+			goto chdir_error;
+        }
+		goto update_pwds;
     }
 
-    /* crec q chdir no actualitza PWD i pentura estaria guapo mirar d q tb s'actualitzi
-     * OLDPWD si després tb volem implementar la funcionalitat de `cd -`
-     */
-    if (chdir(args[1]) != 0) {
-        fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+    /* chdir no actualitza PWD.
+     * si no hi ha errors, s'actualitzen PWD i OLDPWD */
+    if (strlen(args[1]) == 1 && args[1][0] == '-') {
+        /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
+        if (chdir(getenv("OLDPWD")) != 0) {
+			goto chdir_error;
+        }
+    } else if (chdir(args[1]) != 0) {
+		goto chdir_error;
     }
 
+update_pwds:
+    setenv("OLDPWD", getenv("PWD"), 1); /* sobreescriure OLDPWD amb PWD */
+    char buf[MAX_PATH_LEN] = {0};
+    getcwd(buf, MAX_PATH_LEN);
+    setenv("PWD", buf, 1); /* actualitzar PWD amb el nou */
     return MISHI_OK;
+
+chdir_error:
+	fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+	return MISHI_ERR;
 }
 
 /* atura execució */
@@ -140,12 +154,12 @@ int mishi_exit(char **args) {
 int mishi_help(char **args) {
     (void)args;
 
-    fprintf(stdout, "Built-in commands: \n");
-    fprintf(stdout, "------------------ \n");
+    printf("Built-in commands: \n");
+    printf("------------------ \n");
     for (size_t i = 0; i < NUM_BUILTINS; i++) {
-        fprintf(stdout, "%s ", builtins[i].name);
+        printf("%s ", builtins[i].name);
     }
-    fprintf(stdout, "\n");
+    printf("\n");
     return MISHI_OK;
 }
 
@@ -183,10 +197,10 @@ int mishi_loop(void) {
          */
         handle_line(line);
 
-		if (status == MISHI_ERR) {
-			fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
-			return EXIT_FAILURE;
-		}
+        if (status == MISHI_ERR) {
+            fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
+            return EXIT_FAILURE;
+        }
     }
     return MISHI_OK;
 }
@@ -202,9 +216,8 @@ int print_prompt() {
 
     if (pwd == NULL) pwd = "";
     if (user == NULL) user = "";
-    if (home == NULL) home = "";
 
-    if (strlen(home) > 0 && strncmp(pwd, home, strlen(home)) == 0) {
+    if (home != NULL && strncmp(pwd, home, strlen(home)) == 0) {
         printf("[%s :: ~%s] $ ", user, pwd + strlen(home));
     } else {
         printf("[%s :: %s] $ ", user, pwd);
@@ -263,8 +276,9 @@ void split_line(char *line, char **args) {
 
 /* sobreescriure el \n del final (que deixa fgets()) amb '\0' */
 void strip_newline(char *line) {
-    size_t len = strlen(line);
-    if (len > 0 && line[len - 1] == '\n') {
-        line[len - 1] = '\0';
-    }
+    // size_t len = strlen(line);
+    // if (len > 0 && line[len - 1] == '\n') {
+    //     line[len - 1] = '\0';
+    // }
+    line[strcspn(line, "\n")] = '\0';
 }
