@@ -69,8 +69,10 @@ int handle_line(char *line) {
     split_line(line, args);
 
 #ifdef DEBUG
+	printf("split line: ");
     for (int i = 0; args[i] != NULL; i++) {
-        printf("args[%d]: '%s'\n", i, args[i]);
+        printf(" '%s' ", args[i]);
+        // printf("args[%d]: '%s'\n", i, args[i]);
     }
 #endif // DEBUG
 
@@ -107,12 +109,10 @@ int launch(char **args) {
     return MISHI_OK;
 }
 
-/* reb llista de strings amb els arguments de cd i canvia el directori
- * TODO: no actualitza PWD. */
+/* reb llista de strings amb els arguments de cd i canvia el directori */
 int mishi_cd(char **args) {
     if (args[1] == NULL) {
         /* cas que ens passen només un param (`cd` tot sol) */
-        /* més endavant, jo faria que això vagi al $HOME (posix) */
         // fprintf(stderr, "%s: expected argument to \"cd\"\n", PROGRAM_NAME);
         // return MISHI_ERR;
         if (chdir(getenv("HOME")) != 0) {
@@ -121,8 +121,6 @@ int mishi_cd(char **args) {
 		goto update_pwds;
     }
 
-    /* chdir no actualitza PWD.
-     * si no hi ha errors, s'actualitzen PWD i OLDPWD */
     if (strlen(args[1]) == 1 && args[1][0] == '-') {
         /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
         if (chdir(getenv("OLDPWD")) != 0) {
@@ -133,10 +131,11 @@ int mishi_cd(char **args) {
     }
 
 update_pwds:
-    setenv("OLDPWD", getenv("PWD"), 1); /* sobreescriure OLDPWD amb PWD */
+    /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
+    setenv("OLDPWD", getenv("PWD"), 1);
     char buf[MAX_PATH_LEN] = {0};
     getcwd(buf, MAX_PATH_LEN);
-    setenv("PWD", buf, 1); /* actualitzar PWD amb el nou */
+    setenv("PWD", buf, 1);
     return MISHI_OK;
 
 chdir_error:
@@ -173,7 +172,9 @@ int mishi_loop(void) {
         if (status == MISHI_EOF) {
             printf("\n");
             mishi_exit(NULL);
-        }
+        } else if (status == MISHI_ERR){
+            fprintf(stderr, "%s: error reading line\n", PROGRAM_NAME);
+		}
 
         strip_newline(line);
 
