@@ -1,6 +1,6 @@
 # Adaptat del Makefile de n'Adelaida
 CC=gcc
-CFLAGS=-c -g -Wall -std=c17
+CFLAGS=-c -g -Wall -Wextra -Wpedantic -std=c17
 #LDFLAGS=-lreadline -Incurses #activar usar readline
 
 SOURCES=nivel1.c #nivel2.c nivel3.c nivel4.c nivel5.c nivel6.c my_shell.c

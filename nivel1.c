@@ -9,33 +9,40 @@
 
 #include "constants.h"
 
+int execute(char **args);
+int handle_line(char *line);
+int launch(char **args);
 int mishi_loop();
 int print_prompt();
-int launch(char **args);
-char *read_line(char *line);
-int handle_line(char *line);
+int read_line(char *line);
 void split_line(char *line, char **args);
-int execute(char **args);
-int mishi_num_builtins();
+void strip_newline(char *line);
 
 /* Builtins */
-int mishi_exit(char **args);
-int mishi_help(char **args); // no feia falta ficar-la però era fàcil d afegir
-int mishi_cd(char **args);
-int mishi_export(char **args);
-int mishi_source(char **args);
-int mishi_jobs(char **args);
-int mishi_fg(char **args);
 int mishi_bg(char **args);
+int mishi_cd(char **args);
+int mishi_exit(char **args);
+int mishi_export(char **args);
+int mishi_fg(char **args);
+int mishi_help(char **args); // no feia falta ficar-la però era fàcil d afegir
+int mishi_jobs(char **args);
+int mishi_source(char **args);
 
-char *builtin_str[] = {"cd", "help", "exit"};
-int (*builtin_func[])(char **) = {&mishi_cd, &mishi_help, &mishi_exit};
+struct builtin builtins[] = {
+    {"cd", mishi_cd},
+    {"help", mishi_help},
+    {"exit", mishi_exit},
+    // { "fg", mishi_fg },
+    // { "export", mishi_export },
+    // { "jobs", mishi_jobs },
+    // { "source", mishi_source },
+};
 
-int main(void) {
-    mishi_loop();
-    return EXIT_SUCCESS;
-}
+/* A partir de l'array de strings (noms de builtins),
+ * retorna nombre de builtins */
+#define NUM_BUILTINS (sizeof(builtins) / sizeof(builtins[0]))
 
+int main(void) { return mishi_loop(); }
 
 int execute(char **args) {
     /* mirar usuari ha passat un command buit */
@@ -43,27 +50,26 @@ int execute(char **args) {
         return 1;
     }
 
-    for (int i = 0; i < mishi_num_builtins(); i++) {
-        /* primer mirar si és algun dels nostres builtins */
-        if (strcmp(args[0], builtin_str[i]) == 0) {
-            return (*builtin_func[i])(args);
+    /* primer mirar si és algun dels nostres builtins */
+    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+        if (strcmp(args[0], builtins[i].name) == 0) {
+            return builtins[i].func(args);
         }
     }
 
     return launch(args);
 }
 
+/* WARNING: Aquesta funció en teoria és `execute_line()` però no m ha agradat es nom
+ *
+ * S'hi passa una línea sencera acabada amb \0.
+ * line es destrueix i es divideix en una llista de strings (args)
+ * S'executa la llista de strings (args)
+ * retorna el valor de retorn de la comanda executada.
+ */
 int handle_line(char *line) {
-    /* WARNING: Aquesta funció en teoria és `execute_line()` però no m ha agradat es nom
-     *
-     * S'hi passa una línea sencera acabada amb \0.
-     * line es destrueix i es divideix en una llista de strings (args)
-     * S'executa la llista de strings (args)
-     */
-
-    char *args[ARGS_SIZE];
+    char *args[ARGS_SIZE] = {0};
     split_line(line, args);
-    execute(args);
 
 #ifdef DEBUG
     for (int i = 0; args[i] != NULL; i++) {
@@ -71,15 +77,14 @@ int handle_line(char *line) {
     }
 #endif // DEBUG
 
-    return EXIT_SUCCESS;
+    return execute(args);
 }
 
 int launch(char **args) {
     pid_t pid, wpid;
     int status;
 
-    pid = fork();
-    /* a partir d'ara tenim 2 processos */
+    pid = fork(); /* a partir d'ara tenim 2 processos */
 
     if (pid == 0) { /* procés fill */
         /* execvp() executa els arguments */
@@ -90,24 +95,29 @@ int launch(char **args) {
     } else if (pid < 0) {
         /* -1 és un error de fork() */
         fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
     } else {
         /* procés pare, només espera que el fill acabi */
         do {
             wpid = waitpid(pid, &status, WUNTRACED);
-            /* TODO: algo d error checking o d veure s exit value del fill */
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
+
+        if (wpid == -1) {
+            fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+        }
     }
 
-    return 1;
+    return MISHI_OK;
 }
 
+/* reb llista de strings amb els arguments de cd i canvia el directori
+ * TODO: no actualitza PWD. */
 int mishi_cd(char **args) {
-    /* reb llista de strings amb els arguments de cd */
     if (args[1] == NULL) {
         /* cas que ens passen només un param (`cd` tot sol) */
         /* més endavant, jo faria que això vagi al $HOME (posix) */
         fprintf(stderr, "%s: expected argument to \"cd\"\n", PROGRAM_NAME);
-        return 1;
+        return MISHI_ERR;
     }
 
     /* crec q chdir no actualitza PWD i pentura estaria guapo mirar d q tb s'actualitzi
@@ -117,24 +127,26 @@ int mishi_cd(char **args) {
         fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
     }
 
-    return 1;
+    return MISHI_OK;
 }
 
+/* atura execució */
 int mishi_exit(char **args) {
-    /* atura execució */
+    (void)args;
     exit(0);
 }
 
+/* Imprimeix els builtins que tenim */
 int mishi_help(char **args) {
-    /* Imprimeix els builtins que tenim */
+	(void)args;
 
     fprintf(stdout, "Built-in commands: \n");
     fprintf(stdout, "------------------ \n");
-    for (int i = 0; i < mishi_num_builtins(); i++) {
-        fprintf(stdout, "%s ", builtin_str[i]);
+    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+        fprintf(stdout, "%s ", builtins[i].name);
     }
     fprintf(stdout, "\n");
-    return 1;
+    return MISHI_OK;
 }
 
 int mishi_loop(void) {
@@ -143,12 +155,7 @@ int mishi_loop(void) {
     while (1) {
         print_prompt();
         read_line(line);
-
-        /* sobreescriure el \n del final (que deixa fgets()) amb '\0' */
-        int lgth = strlen(line);
-        if (lgth > 0 && line[lgth - 1] == '\n') {
-            line[lgth - 1] = '\0';
-        }
+        strip_newline(line);
 
 #ifdef DEBUG
         printf("line: '%s'\n", line);
@@ -170,14 +177,7 @@ int mishi_loop(void) {
          */
         handle_line(line);
     }
-    return EXIT_SUCCESS;
-}
-
-
-/* A partir de l'array de strings (noms de builtins),
- * retorna nombre de builtins */
-inline int mishi_num_builtins() {
-    return sizeof(builtin_str) / sizeof(char *);
+    return MISHI_OK;
 }
 
 
@@ -186,54 +186,56 @@ inline int mishi_num_builtins() {
 int print_prompt() {
 
     /* formatam la part de PWD que quedi guapo sense el $HOME */
-    char *pwd = getenv("PWD");
-    char *user = getenv("USER");
-    char *home = getenv("HOME");
+    const char *pwd = getenv("PWD");
+    const char *user = getenv("USER");
+    const char *home = getenv("HOME");
 
     if (pwd == NULL) pwd = "";
     if (user == NULL) user = "";
     if (home == NULL) home = "";
 
     if (strlen(home) > 0 && strncmp(pwd, home, strlen(home)) == 0) {
-		printf("[%s :: ~%s] $ ", user, pwd+strlen(home));
+        printf("[%s :: ~%s] $ ", user, pwd + strlen(home));
     } else {
-		printf("[%s :: %s] $ ", user, pwd);
-	}
+        printf("[%s :: %s] $ ", user, pwd);
+    }
     return EXIT_SUCCESS;
 }
 
-char *read_line(char *line) {
-    /*
-     * llegeix una línia de l'usuari i la fica dins line
-     *
-     * teòricament read_line tb imprimeix prompt però no m ha agradat
-     * imprimeix el prompt i llegeix una línia de stdin
-     *
-     * TODO: Super cursed que la funció 'read_line()' mostri el prompt
-     */
+/*
+ * llegeix una línia de l'usuari i la fica dins line
+ *
+ * teòricament read_line tb imprimeix prompt però no m ha agradat
+ * imprimeix el prompt i llegeix una línia de stdin
+ *
+ * TODO: Super cursed que la funció 'read_line()' mostri el prompt
+ * retorna:
+ * 		0 si és un EOF
+ * 		1 si tot ha anat correcte
+ * 		-1 si hi ha hagut error
+ */
+int read_line(char *line) {
     if (NULL == fgets(line, COMMAND_LINE_SIZE, stdin)) {
         /* si fgets() retorna NULL hi ha hagut un error */
         printf("%s: %s\n", PROGRAM_NAME, strerror(errno));
-        mishi_exit(NULL);
+        return MISHI_ERR;
 
     } else if (feof(stdin)) {
         /* comprovar si s'ha tancat stdin amb C-d (feof retornaria nonzero) */
-        mishi_exit(NULL);
+		return MISHI_EOF;
     }
 
-    return line;
+    return MISHI_OK;
 }
 
+/* li passam la línia llegida acabada amb \0 `line`
+ * i la llista de strings `args` a ser emplenada */
 void split_line(char *line, char **args) {
-    /* li passam la línia llegida acabada amb \0 `line`
-     * i la llista de strings `args` a ser emplenada */
 
-    char *token = NULL;
+    char *token = strtok(line, TOKEN_DELIMITER);
     int idx = 0;
 
-    token = strtok(line, TOKEN_DELIMITER);
-
-    while (token != NULL) {
+    while (token != NULL && idx < ARGS_SIZE - 1) {
 
         if (token[0] == '#') {
             /* Si *comença* amb # és un comentari */
@@ -249,3 +251,10 @@ void split_line(char *line, char **args) {
     args[idx] = NULL;
 }
 
+/* sobreescriure el \n del final (que deixa fgets()) amb '\0' */
+void strip_newline(char *line) {
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\n') {
+        line[len - 1] = '\0';
+    }
+}
