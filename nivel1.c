@@ -138,7 +138,7 @@ int mishi_exit(char **args) {
 
 /* Imprimeix els builtins que tenim */
 int mishi_help(char **args) {
-	(void)args;
+    (void)args;
 
     fprintf(stdout, "Built-in commands: \n");
     fprintf(stdout, "------------------ \n");
@@ -151,10 +151,16 @@ int mishi_help(char **args) {
 
 int mishi_loop(void) {
     char line[COMMAND_LINE_SIZE];
+    int status = MISHI_OK;
 
     while (1) {
         print_prompt();
-        read_line(line);
+        status = read_line(line);
+        if (status == MISHI_EOF) {
+            printf("\n");
+            mishi_exit(NULL);
+        }
+
         strip_newline(line);
 
 #ifdef DEBUG
@@ -176,10 +182,14 @@ int mishi_loop(void) {
          * x eso jo li he dit handle_line().
          */
         handle_line(line);
+
+		if (status == MISHI_ERR) {
+			fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
+			return EXIT_FAILURE;
+		}
     }
     return MISHI_OK;
 }
-
 
 /* imprimeix el prompt a partir de les variables d'entorn USER i PWD */
 /* TODO (realment un nice-to-have): afegir suport per colors */
@@ -217,12 +227,12 @@ int print_prompt() {
 int read_line(char *line) {
     if (NULL == fgets(line, COMMAND_LINE_SIZE, stdin)) {
         /* si fgets() retorna NULL hi ha hagut un error */
+        if (feof(stdin)) {
+            /* comprovar si s'ha tancat stdin amb C-d (feof retornaria nonzero) */
+            return MISHI_EOF;
+        }
         printf("%s: %s\n", PROGRAM_NAME, strerror(errno));
         return MISHI_ERR;
-
-    } else if (feof(stdin)) {
-        /* comprovar si s'ha tancat stdin amb C-d (feof retornaria nonzero) */
-		return MISHI_EOF;
     }
 
     return MISHI_OK;
