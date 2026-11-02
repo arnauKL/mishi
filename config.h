@@ -17,9 +17,9 @@
 
 
 #define PROGRAM_NAME "mishi"
-#define MISHI_OK     1
+#define MISHI_OK     0
 #define MISHI_ERR    -1
-#define MISHI_EOF    0
+#define MISHI_EOF    2
 
 #define MAX_PATH_LEN      128
 #define COMMAND_LINE_SIZE 1024

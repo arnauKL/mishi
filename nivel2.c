@@ -1,0 +1,376 @@
+/*
+ * Novembre 2026
+ *
+ * Minishell Sistemes Operatius, nivell 2.
+ *
+ * Grup 101, subgrup "cé menos menos":
+ * 		- Jaume Cladera
+ * 		- Arnau K. Deprez
+ * 		- Matías Volpe
+ */
+
+#include "config.h"
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+int execute(char **args);
+int execute_line(char *line);
+int launch(char **args);
+int internal_loop();
+int print_prompt();
+char *read_line(char *line);
+int parse_args(char *line, char **args);
+void strip_newline(char *line);
+
+/* Builtins */
+int internal_bg(char **args);
+int internal_cd(char **args);
+int internal_exit(char **args);
+int internal_export(char **args);
+int internal_fg(char **args);
+int internal_help(char **args); // no feia falta ficar-la però era fàcil d afegir
+int internal_jobs(char **args);
+int internal_source(char **args);
+
+struct builtin builtins[] = {
+    // clang-format off
+    { "cd"     , internal_cd},
+    { "exit"   , internal_exit},
+    { "export" , internal_export },
+    { "fg"     , internal_fg },
+    { "help"   , internal_help},
+    { "jobs"   , internal_jobs },
+    { "source" , internal_source },
+    { "." 	   , internal_source }, // alias com a bash
+    // clang-format on
+};
+
+/* A partir de l'array retorna nombre de builtins */
+#define NUM_BUILTINS (sizeof(builtins) / sizeof(builtins[0]))
+
+int main(void) {
+    /* només crida a loop */
+    return internal_loop();
+}
+
+/* ----------------------- implementacions ----------------------- */
+
+/*
+ * executa el primer element de l'array de comands `args`
+ * comprova si és un builtin i l'executa si ho és.
+ *
+ * retorna el valor de retorn de la funció o 1 en cas que args sigui NULL o
+ * estigui  buit
+ */
+int execute(char **args) {
+    /* mirar usuari ha passat un command buit */
+    if (args == NULL || args[0] == NULL) { /* short-circuit ben guapo */
+        return MISHI_OK;
+    }
+
+    /* primer mirar si és algun dels nostres builtins */
+    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+        if (strcmp(args[0], builtins[i].name) == 0) {
+            DEBUG_PRINT("[%s()]\n", builtins[i].name);
+            return builtins[i].func(args);
+        }
+    }
+
+    return launch(args);
+}
+
+/*
+ * S'hi passa una línia sencera acabada amb \0.
+ * line es destrueix i es divideix en una llista de strings (args)
+ * S'executa la llista de strings (args)
+ * retorna el valor de retorn de la comanda executada.
+ */
+int execute_line(char *line) {
+
+    char *args[ARGS_SIZE] = {0};
+    int n_args = parse_args(line, args);
+    if (n_args == 0) {
+        return MISHI_OK;
+    }
+
+#ifdef DEBUG /* mostrar args */
+    fprintf(stderr, "[parse_args() -> ");
+    for (int i = 0; args[i] != NULL; i++) {
+        fprintf(stderr, " '%s'", args[i]);
+    }
+    fprintf(stderr, "]\n");
+#endif // DEBUG
+
+    /* en teoria només s'ha de passar a check_internal() però ja directament
+     * miram si és un internal dins execute i executam allà */
+
+    return execute(args);
+}
+
+/* reb llista de strings amb els arguments de cd i canvia el directori */
+int internal_cd(char **args) {
+    /*
+     * TODO: implementar funcionalitat per canviar de directori
+     * quan hi ha "" o '' o '\ '.
+     * Seria més fàcil deixar de fer servir strtok i passarho ja parsejat bé.
+     * TODO: demanar permís a nen Toni
+     */
+    if (args[1] == NULL) {
+
+        /* cas que ens passen només un param (`cd` tot sol) */
+        if (chdir(getenv("HOME")) != 0) {
+            goto chdir_error;
+        }
+        goto update_pwds;
+    }
+
+    if (args[2] == NULL) {
+        /* cd amb un arg (cd XXXX) */
+
+        /* miram el cas particular 'cd -' */
+        if (strlen(args[1]) == 1 && args[1][0] == '-') {
+            /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
+            if (chdir(getenv("OLDPWD")) != 0) {
+                goto chdir_error;
+            }
+        } else if (chdir(args[1]) != 0) {
+            goto chdir_error;
+        }
+        goto update_pwds;
+    }
+
+    /* si hem arribat aquí vol dir que tenim cd amb més d'un argument */
+
+    if (strchr(args[2], '"') == 0 || strchr(args[2], '\'') == 0) {
+        /* `cd "....` */
+    }
+
+update_pwds:
+    /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
+    setenv("OLDPWD", getenv("PWD"), 1);
+    char buf[MAX_PATH_LEN] = {0};
+    getcwd(buf, MAX_PATH_LEN);
+    setenv("PWD", buf, 1);
+    return MISHI_OK;
+
+chdir_error:
+    fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+    return MISHI_ERR;
+}
+
+/* reactiva un procés en el background */
+int internal_bg(char **args) {
+    (void)args;
+    return MISHI_OK;
+}
+
+/* atura execució */
+int internal_exit(char **args) {
+    (void)args;
+    printf("adéu!\n");
+    exit(0);
+}
+
+/* defineix el valor d'una variable d'entorn */
+int internal_export(char **args) {
+    if (args[1] == NULL) {
+        fprintf(stderr, "%s: export: falten arguments", PROGRAM_NAME);
+        return MISHI_ERR;
+    }
+
+    /* dins args[1] tenim 'KEY=VALUE' */
+	char *key_ptr = strtok(args[1], "=");
+	char *value_ptr = strtok(NULL, "=");
+
+	if(value_ptr == NULL) {
+		/* no s'ha trobat el '=' */
+		fprintf(stderr, "%s: export: expected 'KEY=VALUE' argument syntax\n", PROGRAM_NAME);
+		return MISHI_ERR;
+	}
+
+	DEBUG_PRINT("args[1]: %s\n", args[1]);
+	DEBUG_PRINT("key_ptr: %s\n", key_ptr);
+	DEBUG_PRINT("value_ptr: %s\n", value_ptr);
+
+	if (setenv(key_ptr, value_ptr, 1) == -1) {
+		fprintf(stderr, "%s: export: %s\n", PROGRAM_NAME,  strerror(errno));
+	}
+
+    printf("$%s is now '%s'\n", key_ptr, getenv(key_ptr));
+    return MISHI_OK;
+}
+
+/* reanuda un procés en el foreground */
+int internal_fg(char **args) {
+    (void)args;
+    return MISHI_OK;
+}
+
+/* mostra els processos aturats o en background */
+int internal_jobs(char **args) {
+    (void)args;
+    return MISHI_OK;
+}
+
+/* Imprimeix els builtins que tenim */
+int internal_help(char **args) {
+    (void)args;
+
+    printf("Built-in commands: \n");
+    printf("------------------ \n");
+    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+        printf("%s ", builtins[i].name);
+    }
+    printf("\n");
+    return MISHI_OK;
+}
+
+/*
+ * Conté el bucle principal del shell
+ */
+int internal_loop(void) {
+    char line[COMMAND_LINE_SIZE];
+    int status = MISHI_OK;
+
+    while (1) {
+        char *ptr = read_line(line);
+        if (ptr == NULL) {
+
+            if (feof(stdin)) {
+                internal_exit(NULL);
+                break;
+            }
+
+            fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+            break;
+        }
+
+        DEBUG_PRINT("[read_line() -> ptr: %s]\n", ptr != NULL ? ptr : "(null)");
+        DEBUG_PRINT("[read_line() -> line: %s]\n", line);
+
+        status = execute_line(line);
+
+        if (status == MISHI_ERR) {
+            //fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
+            //return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
+        }
+    }
+
+    return MISHI_OK;
+}
+
+/* sourceja fitxers */
+int internal_source(char **args) {
+    (void)args;
+    return MISHI_OK;
+}
+
+/* executa una comanda externa
+ * això no entra dins nivel2
+ */
+int launch(char **args) {
+    pid_t pid, wpid;
+    int status;
+
+    pid = fork(); /* a partir d'ara tenim 2 processos */
+
+    if (pid == 0) { /* procés fill */
+        /* execvp() executa els arguments */
+        if (execvp(args[0], args) == -1) {
+            fprintf(stderr, "%s: %s\n", args[0], strerror(errno));
+            exit(EXIT_FAILURE); /* Si retorna, mata el fill */
+        }
+    } else if (pid < 0) {
+        /* -1 és un error de fork() */
+        fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    } else {
+        /* procés pare, només espera que el fill acabi */
+        do {
+            wpid = waitpid(pid, &status, WUNTRACED);
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
+
+        if (wpid == -1) {
+            fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+        }
+    }
+
+    return MISHI_OK;
+}
+
+/* imprimeix el prompt a partir de les variables d'entorn USER i PWD */
+/* TODO (realment un nice-to-have): afegir suport per colors */
+int print_prompt() {
+
+    /* formatam la part de PWD que quedi guapo sense el $HOME */
+    const char *pwd = getenv("PWD");
+    const char *user = getenv("USER");
+    const char *home = getenv("HOME");
+
+    if (pwd == NULL) pwd = "";
+    if (user == NULL) user = "";
+
+    if (home != NULL && strncmp(pwd, home, strlen(home)) == 0) {
+        printf("[%s :: ~%s] $ ", user, pwd + strlen(home));
+    } else {
+        printf("[%s :: %s] $ ", user, pwd);
+    }
+    return EXIT_SUCCESS;
+}
+
+/*
+ * imprimeix el prompt i llegeix una línia de stdin
+ *
+ * retorna un punter a la línia llegida o NULL si hi ha un error o un EOF.
+ */
+char *read_line(char *line) {
+
+    print_prompt();
+
+    if (fgets(line, COMMAND_LINE_SIZE, stdin) == NULL) {
+        /* si fgets() retorna NULL hi ha hagut un error o EOF */
+
+        printf("%s: %s\n", PROGRAM_NAME, strerror(errno));
+        return NULL;
+    }
+
+    strip_newline(line);
+    return line;
+}
+
+/*
+ * li passam la línia llegida acabada amb \0 `line`
+ * i la llista de strings `args` a ser emplenada
+ *
+ * line es destrueix
+ */
+int parse_args(char *line, char **args) {
+
+    char *token = strtok(line, TOKEN_DELIMITER);
+    int idx = 0;
+
+    while (token != NULL && idx < ARGS_SIZE - 1) {
+
+        if (token[0] == '#') {
+            /* Si *comença* amb '#' és un comentari */
+            break;
+        }
+
+        args[idx++] = token;
+
+        /* strtok() guarda estat, guarda el seg char després del split token, x
+         * això li passam NULL */
+        token = strtok(NULL, TOKEN_DELIMITER);
+    }
+
+    args[idx] = NULL;
+    return idx;
+}
+
+/* sobreescriu el \n del final de `line` amb un '\0'*/
+void strip_newline(char *line) { line[strcspn(line, "\n")] = '\0'; }
