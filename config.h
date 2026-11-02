@@ -6,7 +6,15 @@
 #endif
 
 /* Així podem activar/desactivar prints de debug fàcilment */
-//#define DEBUG
+#define DEBUG
+
+// https://stackoverflow.com/a/1941336
+#ifdef DEBUG
+#define DEBUG_PRINT(...) fprintf( stderr, __VA_ARGS__ )
+#else
+#define DEBUG_PRINT(...) do{ } while ( 0 )
+#endif
+
 
 #define PROGRAM_NAME "mishi"
 #define MISHI_OK     1
