@@ -51,7 +51,7 @@ struct builtin builtins[] = {
 };
 
 /* A partir de l'array retorna nombre de builtins */
-#define NUM_BUILTINS (sizeof(builtins) / sizeof(builtins[0]))
+#define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
 int main(void) {
     /* només crida a loop */
@@ -74,7 +74,7 @@ int execute(char **args) {
     }
 
     /* primer mirar si és algun dels nostres builtins */
-    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
         if (strcmp(args[0], builtins[i].name) == 0) {
             DEBUG_PRINT("[%s()]\n", builtins[i].name);
             return builtins[i].func(args);
@@ -223,7 +223,7 @@ int internal_help(char **args) {
 
     printf("Built-in commands: \n");
     printf("------------------ \n");
-    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
         printf("%s ", builtins[i].name);
     }
     printf("\n");
