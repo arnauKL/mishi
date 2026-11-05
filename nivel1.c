@@ -10,7 +10,9 @@
  *
  */
 
-#include "config.h"
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -19,6 +21,49 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+
+/* =-------------------= configuracions =-------------------= */
+
+#define PROGRAM_NAME "mishi"
+#define MISHI_OK     0
+#define MISHI_ERR    -1
+#define MISHI_EOF    2
+
+#define MAX_PATH_LEN      128
+#define COMMAND_LINE_SIZE 1024
+#define ARGS_SIZE         64
+#define TOKEN_DELIMITER   " \t\r\n" // x ara: espai, tab, newline
+
+/* Així podem activar/desactivar prints de debug fàcilment */
+#define DEBUG
+
+/* =-------------------= macros =-------------------= */
+
+/* https://stackoverflow.com/a/1941336 */
+#ifdef DEBUG
+#define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define DEBUG_PRINT(...) do { } while (0)
+#endif
+
+#define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
+
+/* =-------------------= nous tipus =-------------------= */
+
+/* declar nou tipus `builtin_fn` tipus punter a funció:
+ * retorna `int` i reb `char **`
+ */
+typedef int (*builtin_fn)(char **);
+
+/* struct per guardar builtins amb el nom "cd" i la funció interna
+ * "mishi_cd" */
+struct builtin
+{
+    char *name;
+    builtin_fn func;
+};
+
+/* =-------------------= prototips =-------------------= */
 int execute(char **args);
 int execute_line(char *line);
 int launch(char **args);
@@ -38,6 +83,7 @@ int internal_help(char **args); // no feia falta ficar-la però era fàcil d afe
 int internal_jobs(char **args);
 int internal_source(char **args);
 
+/* =-------------------= globals =-------------------= */
 struct builtin builtins[] = {
     // clang-format off
     { "cd"     , internal_cd},
@@ -50,9 +96,6 @@ struct builtin builtins[] = {
     { "." 	   , internal_source }, // alias com a bash
     // clang-format on
 };
-
-/* A partir de l'array retorna nombre de builtins */
-#define NUM_BUILTINS (sizeof(builtins) / sizeof(builtins[0]))
 
 int main(void) {
     /* només crida a loop */
@@ -75,7 +118,7 @@ int execute(char **args) {
     }
 
     /* primer mirar si és algun dels nostres builtins */
-    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
         if (strcmp(args[0], builtins[i].name) == 0) {
             DEBUG_PRINT("[%s() -> ", builtins[i].name);
             return builtins[i].func(args);
@@ -190,7 +233,7 @@ int internal_help(char **args) {
 
     printf("Built-in commands: \n");
     printf("------------------ \n");
-    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
         printf("%s ", builtins[i].name);
     }
     printf("\n");
@@ -240,6 +283,7 @@ int internal_source(char **args) {
 
 /* executa una comanda externa
  * això no entra dins nivel1
+ * TODO: afegir tot dins job_lists (un array q no he fet)
  */
 int launch(char **args) {
     pid_t pid, wpid;

@@ -5,6 +5,8 @@
 #define _POSIX_C_SOURCE 200112L
 #endif
 
+#include <unistd.h>
+
 /* Així podem activar/desactivar prints de debug fàcilment */
 #define DEBUG
 
@@ -37,6 +39,17 @@ struct builtin
 {
     char *name;
     builtin_fn func;
+};
+
+/* struct per guardar informació del job
+ * char estat no estaria millor fer q sigui un ENUM?
+ */
+struct info_job
+{
+	pid_t pid;
+	char estat;  // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’: Finalizado)  
+
+    char cmd[COMMAND_LINE_SIZE]; // línea de comand associada
 };
 
 #endif // CONFIG_H

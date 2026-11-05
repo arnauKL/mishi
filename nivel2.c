@@ -9,7 +9,9 @@
  * 		- Matías Volpe
  */
 
-#include "config.h"
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -18,6 +20,51 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* =-------------------= configuracions =-------------------= */
+
+#define PROGRAM_NAME "mishi"
+#define MISHI_OK     0
+#define MISHI_ERR    -1
+#define MISHI_EOF    2
+
+#define MAX_PATH_LEN      128
+#define COMMAND_LINE_SIZE 1024
+#define ARGS_SIZE         64
+#define TOKEN_DELIMITER   " \t\r\n" // x ara: espai, tab, newline
+
+/* Així podem activar/desactivar prints de debug fàcilment */
+#define DEBUG
+
+/* =-------------------= macros =-------------------= */
+
+/* https://stackoverflow.com/a/1941336 */
+#ifdef DEBUG
+#define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define DEBUG_PRINT(...) do { } while (0)
+#endif
+
+#define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
+
+/* =-------------------= nous tipus =-------------------= */
+
+/*
+ * tipus `builtin_fn` tipus punter a funció:
+ * retorna `int` i reb `char **`
+ */
+typedef int (*builtin_fn)(char **);
+
+/*
+ * struct per guardar builtins amb el nom "cd" i la funció interna
+ * "internal_cd"
+ */
+struct builtin
+{
+    char *name;
+    builtin_fn func;
+};
+
+/* =-------------------= prototips =-------------------= */
 int execute(char **args);
 int execute_line(char *line);
 int launch(char **args);
@@ -37,7 +84,8 @@ int internal_help(char **args); // no feia falta ficar-la però era fàcil d afe
 int internal_jobs(char **args);
 int internal_source(char **args);
 
-struct builtin builtins[] = {
+/* =-------------------= globals =-------------------= */
+static struct builtin builtins[] = {
     // clang-format off
     { "cd"     , internal_cd},
     { "exit"   , internal_exit},
@@ -50,15 +98,11 @@ struct builtin builtins[] = {
     // clang-format on
 };
 
-/* A partir de l'array retorna nombre de builtins */
-#define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
-
+/* =-------------------= implementacions =-------------------= */
+/* només crida a loop */
 int main(void) {
-    /* només crida a loop */
     return internal_loop();
 }
-
-/* ----------------------- implementacions ----------------------- */
 
 /*
  * executa el primer element de l'array de comands `args`
@@ -184,22 +228,22 @@ int internal_export(char **args) {
     }
 
     /* dins args[1] tenim 'KEY=VALUE' */
-	char *key_ptr = strtok(args[1], "=");
-	char *value_ptr = strtok(NULL, "=");
+    char *key_ptr = strtok(args[1], "=");
+    char *value_ptr = strtok(NULL, "=");
 
-	if(value_ptr == NULL) {
-		/* no s'ha trobat el '=' */
-		fprintf(stderr, "%s: export: expected 'KEY=VALUE' argument syntax\n", PROGRAM_NAME);
-		return MISHI_ERR;
-	}
+    if (value_ptr == NULL) {
+        /* no s'ha trobat el '=' */
+        fprintf(stderr, "%s: export: expected 'KEY=VALUE' argument syntax\n", PROGRAM_NAME);
+        return MISHI_ERR;
+    }
 
-	DEBUG_PRINT("args[1]: %s\n", args[1]);
-	DEBUG_PRINT("key_ptr: %s\n", key_ptr);
-	DEBUG_PRINT("value_ptr: %s\n", value_ptr);
+    DEBUG_PRINT("args[1]: %s\n", args[1]);
+    DEBUG_PRINT("key_ptr: %s\n", key_ptr);
+    DEBUG_PRINT("value_ptr: %s\n", value_ptr);
 
-	if (setenv(key_ptr, value_ptr, 1) == -1) {
-		fprintf(stderr, "%s: export: %s\n", PROGRAM_NAME,  strerror(errno));
-	}
+    if (setenv(key_ptr, value_ptr, 1) == -1) {
+        fprintf(stderr, "%s: export: %s\n", PROGRAM_NAME, strerror(errno));
+    }
 
     printf("$%s is now '%s'\n", key_ptr, getenv(key_ptr));
     return MISHI_OK;
@@ -256,8 +300,8 @@ int internal_loop(void) {
         status = execute_line(line);
 
         if (status == MISHI_ERR) {
-            //fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
-            //return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
+            // fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
+            // return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
         }
     }
 
