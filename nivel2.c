@@ -180,31 +180,31 @@ int internal_cd(char **args) {
         if (strlen(args[1]) == 1 && args[1][0] == '-') {
             /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
             if (chdir(getenv("OLDPWD")) != 0) {
-                goto chdir_error;
+                //CHDIR_ERROR
+                fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+                return MISHI_ERR;            
             }
         } else if (chdir(args[1]) != 0) {
-            goto chdir_error;
-        }
-        goto update_pwds;
-    }
+                //CHDIR_ERROR
+                fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+                return MISHI_ERR;         
+            }
 
+        /* UPDATE PWDS  */
+        /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
+        setenv("OLDPWD", getenv("PWD"), 1);
+        char buf[MAX_PATH_LEN] = {0};
+         getcwd(buf, MAX_PATH_LEN);
+         setenv("PWD", buf, 1);
+         return MISHI_OK;    
+        }
+            
     /* si hem arribat aquí vol dir que tenim cd amb més d'un argument */
 
     if (strchr(args[2], '"') == 0 || strchr(args[2], '\'') == 0) {
         /* `cd "....` */
     }
-
-update_pwds:
-    /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
-    setenv("OLDPWD", getenv("PWD"), 1);
-    char buf[MAX_PATH_LEN] = {0};
-    getcwd(buf, MAX_PATH_LEN);
-    setenv("PWD", buf, 1);
-    return MISHI_OK;
-
-chdir_error:
-    fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
-    return MISHI_ERR;
+    
 }
 
 /* reactiva un procés en el background */

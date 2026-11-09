@@ -157,7 +157,7 @@ int execute_line(char *line) {
 }
 
 
-/* això al nivell1 encara no calia
+/* això al nivell1 encara no feia falta
  * reb llista de strings amb els arguments de cd i canvia el directori */
 int internal_cd(char **args) {
     if (args[1] == NULL) {

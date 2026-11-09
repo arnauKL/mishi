@@ -33,6 +33,8 @@
 #define ARGS_SIZE         64
 #define TOKEN_DELIMITER   " \t\r\n" // x ara: espai, tab, newline
 
+#define MAX_JOBS 10
+
 /* Així podem activar/desactivar prints de debug fàcilment */
 #define DEBUG
 
@@ -296,6 +298,14 @@ int internal_loop(void) {
     char line[COMMAND_LINE_SIZE];
     int status = MISHI_OK;
 
+    //instanciamos jobs_list y le damos a jobs_list[0] sus valores iniciales
+    struct info_job jobs_list[MAX_JOBS]
+    jobs_list[0].pid = 0;
+    jobs_list[0].estado = 'N';
+    //rellena todos los espacios de jobs_list[0].cmd con "\0" hasta su tamaño
+    memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
+
+
     while (1) {
         char *ptr = read_line(line);
         if (ptr == NULL) {
@@ -324,17 +334,34 @@ int internal_loop(void) {
 
 /* executa línies de fitxers */
 int internal_source(char **args) {
-    (void)args;
-	/*
-	 * ara podem fer servir fopen()? o hem d anar amb open() encara?
-	 *
-	 * llegim línies una a una i les tractam com si fossin línies del bucle
-	 * entrades a mà.
-	 *
-	 * (REPL bàsic)
-	 * 
-	 */
+        /* comprobamos la linea*/
+    if ((args[1] == NULL) || (args[2] != NULL)) {
+        fprintf(stderr, "ERROR SINTAXIS \n source: source [FILE]");
+        return MISHI_ERR;
+    }
 
+    /* si hem arribat aquí vol dir que tenim source amb més d'un argument */
+    FILE *file = fopen(args[1], "r");
+    if (file == NULL){
+        fprintf(stderr, "%s: source: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+        return MISHI_ERR;
+    }
+    char line[COMMAND_LINE_SIZE];
+
+    while (fgets(line, COMMAND_LINE_SIZE, file) != NULL) {
+        size_t length = strlen(line);
+        /* Miramos por si length es solo un salto de linea*/
+        if (length > 0 && line[length - 1] == '\n') {
+            line[length - 1] = '\0';
+        }
+        
+        fflush(file);
+
+        if (strlen(line) > 0) {
+            execute_line(line);
+        }
+    }
+    fclose(file);
     return MISHI_OK;
 }
 
@@ -360,14 +387,34 @@ int launch(char **args) {
         fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
         return MISHI_ERR;
     } else {
-        /* procés pare, només espera que el fill acabi */
+        /* ACTUALIZAMOS ESTADOS DE jobs_list[0]*/
+
+        jobs_list[0].pid = pid;
+        jobs_list[0].estado = 'E';
+
+        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
+            /*Recorre todos los argumentos del cmd y mete espacios*/
+        for (int i = 0; args[i] != NULL; i++) {
+            strcat(jobs_list[0].cmd, args[i]);
+            
+            if (args[i + 1] != NULL) {
+                strcat(jobs_list[0].cmd, " ");
+            }
+        }
+
+            /* procés pare, només espera que el fill acabi */
         do {
-            wpid = waitpid(pid, &status, WUNTRACED);
+        wpid = waitpid(pid, &status, WUNTRACED);
         } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
 
         if (wpid == -1) {
             fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
         }
+        /* reseteamos todos los valores de jobs_list[0]*/
+        jobs_list[0].pid = 0;
+        jobs_list[0].estado = 'N';
+        //rellena todos los espacios de jobs_list[0].cmd con "\0" hasta su tamaño
+        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
     }
 
     return MISHI_OK;
