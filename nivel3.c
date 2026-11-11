@@ -58,8 +58,8 @@
 typedef int (*builtin_fn)(char **);
 
 /*
- * struct per guardar builtins amb el nom "cd" i la funció interna
- * "internal_cd"
+ * struct per guardar builtins amb el nom p. ex. "cd" i la funció
+ * interna p. ex "internal_cd"
  */
 struct builtin
 {
@@ -73,10 +73,12 @@ struct builtin
 struct info_job
 {
 	pid_t pid;
-	char estat;  // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’: Finalizado)  
-
+	char estat;  // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’: Finalizado)
     char cmd[COMMAND_LINE_SIZE]; // línea de comand associada
 };
+
+// TODO: veure si això pot ser útil
+static const char[] = {'N', 'E', 'D', 'F'};
 
 /* =-------------------= prototips =-------------------= */
 int execute(char **args);
@@ -173,56 +175,63 @@ int execute_line(char *line) {
 }
 
 /* reb llista de strings amb els arguments de cd i canvia el directori */
-int internal_cd(char **args) {
-    /*
-     * TODO: implementar funcionalitat per canviar de directori
-     * quan hi ha "" o '' o '\ '.
-     * Seria més fàcil deixar de fer servir strtok i passarho ja parsejat bé.
-     * TODO: demanar permís a nen Toni
-     */
+int internal_cd(char **args)
+{
+    const char *target;
+
     if (args[1] == NULL) {
-
-        /* cas que ens passen només un param (`cd` tot sol) */
-        if (chdir(getenv("HOME")) != 0) {
-			// TODO: no gotos
-            goto chdir_error;
+        /* cas que ens passen `cd` tot sol -> anar a $HOME */
+        target = getenv("HOME");
+        if (target == NULL) {
+            fprintf(stderr, "%s: cd: HOME is not set\n", PROGRAM_NAME);
+            return MISHI_ERR;
         }
-        goto update_pwds;
-    }
-
-    if (args[2] == NULL) {
-        /* cd amb un arg (cd XXXX) */
-
-        /* miram el cas particular 'cd -' */
-        if (strlen(args[1]) == 1 && args[1][0] == '-') {
-            /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
-            if (chdir(getenv("OLDPWD")) != 0) {
-                goto chdir_error;
-            }
-        } else if (chdir(args[1]) != 0) {
-            goto chdir_error;
+    } else if (args[2] != NULL) {
+        /* cas que ens passen `cd` amb massa arguments */
+        fprintf(stderr, "%s: cd: too many arguments\n", PROGRAM_NAME);
+        return MISHI_ERR;
+    } else if (strncmp(args[1], "-", 1) == 0) {
+        /* cas que ens passen `cd -` -> anar a $OLDPWD */
+        target = getenv("OLDPWD");
+        if (target == NULL) {
+            fprintf(stderr, "%s: cd: OLDPWD is not set\n", PROGRAM_NAME);
+            return MISHI_ERR;
         }
-        goto update_pwds;
+    } else {
+        /* tots els altres casos: `cd ex_dir` */
+        target = args[1];
     }
 
-    /* si hem arribat aquí vol dir que tenim cd amb més d'un argument */
-
-    if (strchr(args[2], '"') == 0 || strchr(args[2], '\'') == 0) {
-        /* `cd "....` */
+    if (chdir(target) != 0) {
+        fprintf(stderr, "%s: cd: %s: %s\n",
+                PROGRAM_NAME, target, strerror(errno));
+        return MISHI_ERR;
     }
 
-update_pwds:
-    /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
-    setenv("OLDPWD", getenv("PWD"), 1);
-    char buf[MAX_PATH_LEN] = {0};
-    getcwd(buf, MAX_PATH_LEN);
-    setenv("PWD", buf, 1);
+    /* Actualitzar PWD i OLDPWD. */
+    char buf[MAX_PATH_LEN];
+    if (getcwd(buf, sizeof buf) == NULL) {
+        fprintf(stderr, "%s: cd: getcwd: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
+    const char *old_pwd = getenv("PWD");
+    if (old_pwd != NULL && setenv("OLDPWD", old_pwd, 1) != 0) {
+        fprintf(stderr, "%s: cd: setenv: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
+    if (setenv("PWD", buf, 1) != 0) {
+        fprintf(stderr, "%s: cd: setenv: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
     return MISHI_OK;
-
-chdir_error:
-    fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
-    return MISHI_ERR;
 }
+
 
 /* reactiva un procés en el background */
 int internal_bg(char **args) {
@@ -334,7 +343,7 @@ int internal_loop(void) {
 
 /* executa línies de fitxers */
 int internal_source(char **args) {
-        /* comprobamos la linea*/
+    /* comprobamos la linea*/
     if ((args[1] == NULL) || (args[2] != NULL)) {
         fprintf(stderr, "ERROR SINTAXIS \n source: source [FILE]");
         return MISHI_ERR;
@@ -354,7 +363,7 @@ int internal_source(char **args) {
         if (length > 0 && line[length - 1] == '\n') {
             line[length - 1] = '\0';
         }
-        
+
         fflush(file);
 
         if (strlen(line) > 0) {
@@ -396,13 +405,13 @@ int launch(char **args) {
             /*Recorre todos los argumentos del cmd y mete espacios*/
         for (int i = 0; args[i] != NULL; i++) {
             strcat(jobs_list[0].cmd, args[i]);
-            
+
             if (args[i + 1] != NULL) {
                 strcat(jobs_list[0].cmd, " ");
             }
         }
 
-            /* procés pare, només espera que el fill acabi */
+        /* procés pare, només espera que el fill acabi */
         do {
         wpid = waitpid(pid, &status, WUNTRACED);
         } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
