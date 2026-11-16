@@ -20,10 +20,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-
 /* =-------------------= configuracions =-------------------= */
+// TODO: eliminar això x entrega
+// clang-format off
 
-#define PROGRAM_NAME "mishi"
 #define MISHI_OK     0
 #define MISHI_ERR    -1
 #define MISHI_EOF    2
@@ -31,9 +31,8 @@
 #define MAX_PATH_LEN      128
 #define COMMAND_LINE_SIZE 1024
 #define ARGS_SIZE         64
+#define N_JOBS			  64
 #define TOKEN_DELIMITER   " \t\r\n" // x ara: espai, tab, newline
-
-#define MAX_JOBS 10
 
 /* Així podem activar/desactivar prints de debug fàcilment */
 #define DEBUG
@@ -44,7 +43,7 @@
 #ifdef DEBUG
 #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
-#define DEBUG_PRINT(...) do { } while (0)
+#define DEBUG_PRINT(...) do {} while (0)
 #endif
 
 #define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -72,19 +71,19 @@ struct builtin
  */
 struct info_job
 {
-	pid_t pid;
-	char estat;  // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’: Finalizado)
+    pid_t pid;
+    char estat; // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’:
+                // Finalizado)
     char cmd[COMMAND_LINE_SIZE]; // línea de comand associada
 };
 
 // TODO: veure si això pot ser útil
-static const char[] = {'N', 'E', 'D', 'F'};
+// const char[] estats_possibles = {'N', 'E', 'D', 'F'};
 
 /* =-------------------= prototips =-------------------= */
 int execute(char **args);
 int execute_line(char *line);
-int launch(char **args);
-int internal_loop();
+int launch_external(char **args);
 int print_prompt();
 char *read_line(char *line);
 int parse_args(char *line, char **args);
@@ -104,7 +103,6 @@ int internal_source(char **args);
 
 /* array que guarda tots els builtins disponibles (nom i punter a la funció) */
 struct builtin builtins[] = {
-    // clang-format off
     { "cd"     , internal_cd},
     { "exit"   , internal_exit},
     { "export" , internal_export },
@@ -113,13 +111,80 @@ struct builtin builtins[] = {
     { "jobs"   , internal_jobs },
     { "source" , internal_source },
     { "." 	   , internal_source }, // alias com a bash
-    // clang-format on
 };
 
+/*  */
+struct info_job jobs_list[N_JOBS];
+
+/* nom del programa, es popula amb `argv[0]` a l'inici del programa */
+char program_name[COMMAND_LINE_SIZE];
+
+// clang-format on
 /* =-------------------= implementacions =-------------------= */
-/* només crida a loop */
-int main(void) {
-    return internal_loop();
+
+/*
+ * Conté el bucle principal del shell
+ */
+int main(int argc, const char **argv) {
+    (void)argc;
+
+    char line[COMMAND_LINE_SIZE];
+    int status;
+
+    // guardam el nom del minishell
+    strncpy(program_name, argv[0], COMMAND_LINE_SIZE);
+
+    // instanciam `jobs_list` i inicialitzam `jobs_list[0]`
+    jobs_list[0].pid = 0;
+    jobs_list[0].estat = 'N';
+    memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd)); // emplena tots els espais de `jobs_list[0].cmd` amb '\0'
+
+    // bucle principal
+    while (1) {
+        char *ptr = read_line(line);
+
+        if (ptr == NULL) {
+            if (feof(stdin)) {
+                internal_exit(NULL);
+            }
+
+            fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
+            return MISHI_ERR; // fallo del fgets()
+        }
+
+        DEBUG_PRINT("[read_line() -> ptr: %s]\n", ptr != NULL ? ptr : "(null)");
+        DEBUG_PRINT("[read_line() -> line: %s]\n", line);
+
+        status = execute_line(line);
+
+        if (status == MISHI_ERR) {
+            // fprintf(stderr, "%s: hi ha hagut un error\n", program_name);
+            // return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
+        }
+    }
+
+    return MISHI_OK;
+}
+
+/*
+ * comprova si es tracta d'un builtin (intenal_XXX)
+ * i l'executa en cas que sí
+ *
+ * Retorna 0 (false) si no és un builtin
+ */
+int check_internal(char **args) {
+    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
+        if (strcmp(args[0], builtins[i].name) == 0) {
+            DEBUG_PRINT("[%s()]\n", builtins[i].name);
+            if (builtins[i].func(args) != 1) {
+                // ERROR en el builtin
+                DEBUG_PRINT("error en %s\n", builtins[i].name);
+            }
+            return 1; // sempre q s'hagi trobat que és un buitin, retornar 1
+        }
+    }
+
+    return 0;
 }
 
 /*
@@ -129,7 +194,7 @@ int main(void) {
  * retorna el valor de retorn de la funció o 1 en cas que args sigui NULL o
  * estigui  buit
  */
-int execute(char **args) {
+int execute_deprecated(char **args) {
     /* mirar usuari ha passat un command buit */
     if (args == NULL || args[0] == NULL) {
         return MISHI_OK;
@@ -143,7 +208,7 @@ int execute(char **args) {
         }
     }
 
-    return launch(args);
+    return launch_external(args);
 }
 
 /*
@@ -168,33 +233,37 @@ int execute_line(char *line) {
     fprintf(stderr, "]\n");
 #endif // DEBUG
 
-    /* en teoria només s'ha de passar a check_internal() però ja directament
-     * miram si és un internal dins execute i executam allà */
+    /* OJO: check_internal() tb executa, no només checkeja */
+    if (!check_internal(args)) {
 
-    return execute(args);
+        /* En cas de no ser una comanda interna, executa */
+        launch_external(args);
+    }
+
+    // TODO: què s hauria d retornar?
+    return MISHI_OK;
 }
 
 /* reb llista de strings amb els arguments de cd i canvia el directori */
-int internal_cd(char **args)
-{
+int internal_cd(char **args) {
     const char *target;
 
     if (args[1] == NULL) {
         /* cas que ens passen `cd` tot sol -> anar a $HOME */
         target = getenv("HOME");
         if (target == NULL) {
-            fprintf(stderr, "%s: cd: HOME is not set\n", PROGRAM_NAME);
+            fprintf(stderr, "%s: cd: HOME is not set\n", program_name);
             return MISHI_ERR;
         }
     } else if (args[2] != NULL) {
         /* cas que ens passen `cd` amb massa arguments */
-        fprintf(stderr, "%s: cd: too many arguments\n", PROGRAM_NAME);
+        fprintf(stderr, "%s: cd: too many arguments\n", program_name);
         return MISHI_ERR;
     } else if (strncmp(args[1], "-", 1) == 0) {
         /* cas que ens passen `cd -` -> anar a $OLDPWD */
         target = getenv("OLDPWD");
         if (target == NULL) {
-            fprintf(stderr, "%s: cd: OLDPWD is not set\n", PROGRAM_NAME);
+            fprintf(stderr, "%s: cd: OLDPWD is not set\n", program_name);
             return MISHI_ERR;
         }
     } else {
@@ -203,35 +272,30 @@ int internal_cd(char **args)
     }
 
     if (chdir(target) != 0) {
-        fprintf(stderr, "%s: cd: %s: %s\n",
-                PROGRAM_NAME, target, strerror(errno));
+        fprintf(stderr, "%s: cd: %s: %s\n", program_name, target, strerror(errno));
         return MISHI_ERR;
     }
 
     /* Actualitzar PWD i OLDPWD. */
     char buf[MAX_PATH_LEN];
     if (getcwd(buf, sizeof buf) == NULL) {
-        fprintf(stderr, "%s: cd: getcwd: %s\n",
-                PROGRAM_NAME, strerror(errno));
+        fprintf(stderr, "%s: cd: getcwd: %s\n", program_name, strerror(errno));
         return MISHI_ERR;
     }
 
     const char *old_pwd = getenv("PWD");
     if (old_pwd != NULL && setenv("OLDPWD", old_pwd, 1) != 0) {
-        fprintf(stderr, "%s: cd: setenv: %s\n",
-                PROGRAM_NAME, strerror(errno));
+        fprintf(stderr, "%s: cd: setenv: %s\n", program_name, strerror(errno));
         return MISHI_ERR;
     }
 
     if (setenv("PWD", buf, 1) != 0) {
-        fprintf(stderr, "%s: cd: setenv: %s\n",
-                PROGRAM_NAME, strerror(errno));
+        fprintf(stderr, "%s: cd: setenv: %s\n", program_name, strerror(errno));
         return MISHI_ERR;
     }
 
     return MISHI_OK;
 }
-
 
 /* reactiva un procés en el background */
 int internal_bg(char **args) {
@@ -249,27 +313,27 @@ int internal_exit(char **args) {
 /* defineix el valor d'una variable d'entorn */
 int internal_export(char **args) {
     if (args[1] == NULL) {
-        fprintf(stderr, "%s: export: falten arguments", PROGRAM_NAME);
+        fprintf(stderr, "%s: export: falten arguments", program_name);
         return MISHI_ERR;
     }
 
     /* dins args[1] tenim 'KEY=VALUE' */
-	char *key_ptr = strtok(args[1], "=");
-	char *value_ptr = strtok(NULL, "=");
+    char *key_ptr = strtok(args[1], "=");
+    char *value_ptr = strtok(NULL, "=");
 
-	if(value_ptr == NULL) {
-		/* no s'ha trobat el '=' */
-		fprintf(stderr, "%s: export: expected 'KEY=VALUE' argument syntax\n", PROGRAM_NAME);
-		return MISHI_ERR;
-	}
+    if (value_ptr == NULL) {
+        /* no s'ha trobat el '=' */
+        fprintf(stderr, "%s: export: expected 'KEY=VALUE' argument syntax\n", program_name);
+        return MISHI_ERR;
+    }
 
-	DEBUG_PRINT("args[1]: %s\n", args[1]);
-	DEBUG_PRINT("key_ptr: %s\n", key_ptr);
-	DEBUG_PRINT("value_ptr: %s\n", value_ptr);
+    DEBUG_PRINT("args[1]: %s\n", args[1]);
+    DEBUG_PRINT("key_ptr: %s\n", key_ptr);
+    DEBUG_PRINT("value_ptr: %s\n", value_ptr);
 
-	if (setenv(key_ptr, value_ptr, 1) == -1) {
-		fprintf(stderr, "%s: export: %s\n", PROGRAM_NAME,  strerror(errno));
-	}
+    if (setenv(key_ptr, value_ptr, 1) == -1) {
+        fprintf(stderr, "%s: export: %s\n", program_name, strerror(errno));
+    }
 
     printf("$%s is now '%s'\n", key_ptr, getenv(key_ptr));
     return MISHI_OK;
@@ -300,50 +364,9 @@ int internal_help(char **args) {
     return MISHI_OK;
 }
 
-/*
- * Conté el bucle principal del shell
- */
-int internal_loop(void) {
-    char line[COMMAND_LINE_SIZE];
-    int status = MISHI_OK;
-
-    //instanciamos jobs_list y le damos a jobs_list[0] sus valores iniciales
-    struct info_job jobs_list[MAX_JOBS]
-    jobs_list[0].pid = 0;
-    jobs_list[0].estado = 'N';
-    //rellena todos los espacios de jobs_list[0].cmd con "\0" hasta su tamaño
-    memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
-
-
-    while (1) {
-        char *ptr = read_line(line);
-        if (ptr == NULL) {
-
-            if (feof(stdin)) {
-                internal_exit(NULL);
-            }
-
-            fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
-            return MISHI_ERR; // fallo del fgets()
-        }
-
-        DEBUG_PRINT("[read_line() -> ptr: %s]\n", ptr != NULL ? ptr : "(null)");
-        DEBUG_PRINT("[read_line() -> line: %s]\n", line);
-
-        status = execute_line(line);
-
-        if (status == MISHI_ERR) {
-            //fprintf(stderr, "%s: hi ha hagut un error\n", PROGRAM_NAME);
-            //return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
-        }
-    }
-
-    return MISHI_OK;
-}
-
 /* executa línies de fitxers */
 int internal_source(char **args) {
-    /* comprobamos la linea*/
+    /* comprovam la línia */
     if ((args[1] == NULL) || (args[2] != NULL)) {
         fprintf(stderr, "ERROR SINTAXIS \n source: source [FILE]");
         return MISHI_ERR;
@@ -351,15 +374,15 @@ int internal_source(char **args) {
 
     /* si hem arribat aquí vol dir que tenim source amb més d'un argument */
     FILE *file = fopen(args[1], "r");
-    if (file == NULL){
-        fprintf(stderr, "%s: source: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
+    if (file == NULL) {
+        fprintf(stderr, "%s: source: %s: %s\n", program_name, args[1], strerror(errno));
         return MISHI_ERR;
     }
     char line[COMMAND_LINE_SIZE];
 
     while (fgets(line, COMMAND_LINE_SIZE, file) != NULL) {
         size_t length = strlen(line);
-        /* Miramos por si length es solo un salto de linea*/
+        /* Miram per si length es només un salt de línia */
         if (length > 0 && line[length - 1] == '\n') {
             line[length - 1] = '\0';
         }
@@ -374,36 +397,47 @@ int internal_source(char **args) {
     return MISHI_OK;
 }
 
-/* executa una comanda externa
- * això no entra dins nivel2
- * TODO: afegir a la taula
- * 	 	 | PID | cmd | estat |
+/*
+ * executa una comanda externa:
+ * fa un fork, el nou fill executa la comanda amb execvp
+ * si la comanda externa falla,
+ * mostra missatge d'error per erno i fa un exit(-1)
+ *
+ * actualitza les dades de jobs_list amb els del procés fill del foreground
+ * fins que passem de nivell i poguem tenir més d'un fill (TODO)
+ *
  */
-int launch(char **args) {
-    pid_t pid, wpid;
+int launch_external(char **args) {
+    pid_t pid, wpid, ppid = 0;
     int status;
 
     pid = fork(); /* a partir d'ara tenim 2 processos */
 
     if (pid == 0) { /* procés fill */
         /* execvp() executa els arguments */
+		ppid = getppid();
+		DEBUG_PRINT("PID pare:\t%d\n", ppid);
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: %s\n", args[0], strerror(errno));
             exit(EXIT_FAILURE); /* Si retorna, mata el fill */
         }
     } else if (pid < 0) {
         /* -1 és un error de fork() */
-        fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+        fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
         return MISHI_ERR;
     } else {
-        /* ACTUALIZAMOS ESTADOS DE jobs_list[0]*/
+        /* procés pare */
 
+        /* actualizam estats de jobs_list[0] */
         jobs_list[0].pid = pid;
-        jobs_list[0].estado = 'E';
+        jobs_list[0].estat = 'E';
+        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
 
-        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
-            /*Recorre todos los argumentos del cmd y mete espacios*/
+
+        /* Recorre todos los argumentos del cmd y mete espacios */
+		// TODO: enlloc d'això podem guardar la `line` inicial abans de ser dividida
         for (int i = 0; args[i] != NULL; i++) {
+            // TODO: strncat enlloc d strcat
             strcat(jobs_list[0].cmd, args[i]);
 
             if (args[i + 1] != NULL) {
@@ -411,19 +445,25 @@ int launch(char **args) {
             }
         }
 
+		DEBUG_PRINT("PID fill: \t%d\n", pid);
+		DEBUG_PRINT("Comanda del fill en primer pla (jobs_list[0].cmd): %s\n", jobs_list[0].cmd);
+
         /* procés pare, només espera que el fill acabi */
         do {
-        wpid = waitpid(pid, &status, WUNTRACED);
+            wpid = waitpid(pid, &status, WUNTRACED);
         } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
 
         if (wpid == -1) {
-            fprintf(stderr, "%s: %s\n", PROGRAM_NAME, strerror(errno));
+            fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
         }
-        /* reseteamos todos los valores de jobs_list[0]*/
+		
+        /* resetejam els valors de jobs_list[0] */
         jobs_list[0].pid = 0;
-        jobs_list[0].estado = 'N';
-        //rellena todos los espacios de jobs_list[0].cmd con "\0" hasta su tamaño
-        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd))
+        jobs_list[0].estat = 'N';
+        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
+
+		DEBUG_PRINT("Program name: %s\n", program_name);
+		DEBUG_PRINT("Fill finalitzat, estat: %d\n", wpid);
     }
 
     return MISHI_OK;
@@ -461,7 +501,7 @@ char *read_line(char *line) {
     if (fgets(line, COMMAND_LINE_SIZE, stdin) == NULL) {
         /* si fgets() retorna NULL hi ha hagut un error o EOF */
 
-        printf("%s: %s\n", PROGRAM_NAME, strerror(errno));
+        printf("%s: %s\n", program_name, strerror(errno));
         return NULL;
     }
 
@@ -497,7 +537,6 @@ int parse_args(char *line, char **args) {
     args[idx] = NULL;
     return idx;
 }
-
 
 /* sobreescriu el \n del final de `line` amb un '\0'*/
 void strip_newline(char *line) { line[strcspn(line, "\n")] = '\0'; }

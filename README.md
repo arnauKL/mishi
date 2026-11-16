@@ -2,7 +2,6 @@
 
 > Estudiants: Jaume Cladera, Arnau K. Deprez, Matías Volpe
 
-
 ## Progrés
 
 Estam finalitzant `nivell3.c`
@@ -24,3 +23,10 @@ make nivel3
 ```
 
 
+## TODO
+
+- aïllar funcionalitat segons el nivell (al nivell 1 no hauríem de poder executar `ls`, per exemple).
+
+- implementar `cd` avançat (a partir del nivell 2).
+
+- afegir colors per missatges d'error.

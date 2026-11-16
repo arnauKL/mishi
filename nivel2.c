@@ -157,54 +157,61 @@ int execute_line(char *line) {
 }
 
 /* reb llista de strings amb els arguments de cd i canvia el directori */
-int internal_cd(char **args) {
-    /*
-     * TODO: implementar funcionalitat per canviar de directori
-     * quan hi ha "" o '' o '\ '.
-     * Seria més fàcil deixar de fer servir strtok i passarho ja parsejat bé.
-     * TODO: demanar permís a nen Toni
-     */
+int internal_cd(char **args)
+{
+    const char *target;
+
     if (args[1] == NULL) {
-
-        /* cas que ens passen només un param (`cd` tot sol) */
-        if (chdir(getenv("HOME")) != 0) {
-            goto chdir_error;
+        /* cas que ens passen `cd` tot sol -> anar a $HOME */
+        target = getenv("HOME");
+        if (target == NULL) {
+            fprintf(stderr, "%s: cd: HOME is not set\n", PROGRAM_NAME);
+            return MISHI_ERR;
         }
-        goto update_pwds;
+    } else if (args[2] != NULL) {
+        /* cas que ens passen `cd` amb massa arguments */
+        fprintf(stderr, "%s: cd: too many arguments\n", PROGRAM_NAME);
+        return MISHI_ERR;
+    } else if (strncmp(args[1], "-", 1) == 0) {
+        /* cas que ens passen `cd -` -> anar a $OLDPWD */
+        target = getenv("OLDPWD");
+        if (target == NULL) {
+            fprintf(stderr, "%s: cd: OLDPWD is not set\n", PROGRAM_NAME);
+            return MISHI_ERR;
+        }
+    } else {
+        /* tots els altres casos: `cd ex_dir` */
+        target = args[1];
     }
 
-    if (args[2] == NULL) {
-        /* cd amb un arg (cd XXXX) */
-
-        /* miram el cas particular 'cd -' */
-        if (strlen(args[1]) == 1 && args[1][0] == '-') {
-            /* l'usuari ha fet `cd -`, fem cd al OLDPWD */
-            if (chdir(getenv("OLDPWD")) != 0) {
-                //CHDIR_ERROR
-                fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
-                return MISHI_ERR;            
-            }
-        } else if (chdir(args[1]) != 0) {
-                //CHDIR_ERROR
-                fprintf(stderr, "%s: cd: %s: %s\n", PROGRAM_NAME, args[1], strerror(errno));
-                return MISHI_ERR;         
-            }
-
-        /* UPDATE PWDS  */
-        /* chdir no actualitza PWD. Si no hi ha errors, s'actualitzen PWD i OLDPWD */
-        setenv("OLDPWD", getenv("PWD"), 1);
-        char buf[MAX_PATH_LEN] = {0};
-         getcwd(buf, MAX_PATH_LEN);
-         setenv("PWD", buf, 1);
-         return MISHI_OK;    
-        }
-            
-    /* si hem arribat aquí vol dir que tenim cd amb més d'un argument */
-
-    if (strchr(args[2], '"') == 0 || strchr(args[2], '\'') == 0) {
-        /* `cd "....` */
+    if (chdir(target) != 0) {
+        fprintf(stderr, "%s: cd: %s: %s\n",
+                PROGRAM_NAME, target, strerror(errno));
+        return MISHI_ERR;
     }
-    
+
+    /* Actualitzar PWD i OLDPWD. */
+    char buf[MAX_PATH_LEN];
+    if (getcwd(buf, sizeof buf) == NULL) {
+        fprintf(stderr, "%s: cd: getcwd: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
+    const char *old_pwd = getenv("PWD");
+    if (old_pwd != NULL && setenv("OLDPWD", old_pwd, 1) != 0) {
+        fprintf(stderr, "%s: cd: setenv: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
+    if (setenv("PWD", buf, 1) != 0) {
+        fprintf(stderr, "%s: cd: setenv: %s\n",
+                PROGRAM_NAME, strerror(errno));
+        return MISHI_ERR;
+    }
+
+    return MISHI_OK;
 }
 
 /* reactiva un procés en el background */
