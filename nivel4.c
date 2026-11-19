@@ -1,7 +1,7 @@
 /*
  * Novembre 2026
  *
- * Minishell Sistemes Operatius, nivell 3.
+ * Minishell Sistemes Operatius, nivell 4.
  *
  * Grup 101, subgrup "cé menos menos":
  * 		- Jaume Cladera
@@ -14,15 +14,15 @@
 #endif
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <signal.h>
 
 /* =-------------------= configuracions =-------------------= */
-// TODO: eliminar això x entrega
+// TODO: eliminar clang-format BS x entrega
 // clang-format off
 
 #define MISHI_OK     0
@@ -33,10 +33,17 @@
 #define COMMAND_LINE_SIZE 1024
 #define ARGS_SIZE         64
 #define N_JOBS			  64
-#define TOKEN_DELIMITER   " \t\r\n" // x ara: espai, tab, newline
+#define TOKEN_DELIMITER   " \t\r\n"
 
 /* Així podem activar/desactivar prints de debug fàcilment */
-#define DEBUG
+//#define DEBUG
+
+#define RED     "\x1b[31m"
+#define GREEN   "\x1b[32m"
+#define BLUE    "\x1b[34m"
+#define GRAY    "\x1B[38;2;176;174;174m"
+#define RESET   "\x1b[0m"
+#define BOLD    "\x1b[1m"
 
 /* =-------------------= macros =-------------------= */
 
@@ -73,12 +80,11 @@ struct builtin
 struct info_job
 {
     pid_t pid;
-    char estat; // ‘N’, ’E’, ‘D’, ‘F’ (‘N’: Ninguno, ‘E’: Ejecutándose y ‘D’: Detenido, ‘F’:
-                // Finalizado)
+    char estat; // 'N': Ninguno, 'E': Ejecutándose y 'D': Detenido, 'F': Finalizado
     char cmd[COMMAND_LINE_SIZE]; // línea de comand associada
 };
 
-// TODO: veure si això pot ser útil
+// TODO: veure si algo així pot ser útil
 // const char[] estats_possibles = {'N', 'E', 'D', 'F'};
 
 /* =-------------------= prototips =-------------------= */
@@ -118,8 +124,8 @@ struct builtin builtins[] = {
     { "." 	   , internal_source }, // alias com a bash
 };
 
-/*  */
 struct info_job jobs_list[N_JOBS];
+unsigned int n_jobs = 0;
 
 /* nom del programa, es popula amb `argv[0]` a l'inici del programa */
 char program_name[COMMAND_LINE_SIZE];
@@ -142,13 +148,13 @@ int main(int argc, const char **argv) {
     // instanciam `jobs_list` i inicialitzam `jobs_list[0]`
     jobs_list[0].pid = 0;
     jobs_list[0].estat = 'N';
-    memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd)); // emplena tots els espais de `jobs_list[0].cmd` amb '\0'
+    memset(jobs_list[0].cmd, '\0',
+           sizeof(jobs_list[0].cmd)); // emplena tots els espais de `jobs_list[0].cmd` amb '\0'
 
-    // definim que s'ha de fer quan es rep una senyal
+    // definim que s'ha de fer quan es reb un senyal
     signal(SIGCHLD, reaper); // SIGCHLD --> senyal de que acaba un procés fill
-    signal(SIGINT, ctrlc); // SIGCHLD --> senyal de que es tira ctrl + c
+    signal(SIGINT, ctrlc);   // SIGCHLD --> senyal de que es tira ctrl + c
 
-    
     // bucle principal
     while (1) {
         char *ptr = read_line(line);
@@ -195,30 +201,6 @@ int check_internal(char **args) {
     }
 
     return 0;
-}
-
-/*
- * executa el primer element de l'array de comands `args`
- * comprova si és un builtin i l'executa si ho és.
- *
- * retorna el valor de retorn de la funció o 1 en cas que args sigui NULL o
- * estigui  buit
- */
-int execute_deprecated(char **args) {
-    /* mirar usuari ha passat un command buit */
-    if (args == NULL || args[0] == NULL) {
-        return MISHI_OK;
-    }
-
-    /* primer mirar si és algun dels nostres builtins */
-    for (size_t i = 0; i < ARRAY_LEN(builtins); i++) {
-        if (strcmp(args[0], builtins[i].name) == 0) {
-            DEBUG_PRINT("[%s()]\n", builtins[i].name);
-            return builtins[i].func(args);
-        }
-    }
-
-    return launch_external(args);
 }
 
 /*
@@ -309,6 +291,7 @@ int internal_cd(char **args) {
 
 /* reactiva un procés en el background */
 int internal_bg(char **args) {
+    // TODO
     (void)args;
     return MISHI_OK;
 }
@@ -351,12 +334,14 @@ int internal_export(char **args) {
 
 /* reanuda un procés en el foreground */
 int internal_fg(char **args) {
+    // TODO
     (void)args;
     return MISHI_OK;
 }
 
 /* mostra els processos aturats o en background */
 int internal_jobs(char **args) {
+    // TODO
     (void)args;
     return MISHI_OK;
 }
@@ -407,55 +392,62 @@ int internal_source(char **args) {
     return MISHI_OK;
 }
 
-// TODO: Probar si funciona
-void reaper(int signum){ 
+/*
+ * es crida per SIGCHLD i elimina el PID del fill de la llista de jobs
+ */
+void reaper(int signum) {
+    (void)signum; //  signum = SIGCHLD és l'únic cas possible
+
     // ho tornam a posar perque a vegades quan acaba reaper es desasigna de SIGCHILD
     signal(SIGCHLD, reaper);
-    
-    printf("reaper() --> Recibida señal %d.\n", signum); // la señal 17 es SIGCHILD 
-    
-    // pid_t waitpid(pid_t pid, int *_Nullable wstatus, int options)
-    // waitpid retorna el PID del procés que ha acabat
-    // WNOHANG fa que el procés no es bloqueji
+
+    printf("reaper() --> Recibida señal %d.\n", signum); // la señal 17 es SIGCHILD
+
+    /* pid_t waitpid(pid_t pid, int *_Nullable wstatus, int options) waitpid
+     * retorna el PID del procés que ha acabat WNOHANG fa que el procés no es
+     * bloqueji */
 
     pid_t ended;
-    while ((ended=waitpid(-1, NULL, WNOHANG))>0) { // 
+    while ((ended = waitpid(-1, NULL, WNOHANG)) > 0) { //
 
-        if (ended == jobs_list[0].pid){
+        if (ended == jobs_list[0].pid) {
             jobs_list[0].pid = 0;
-            jobs_list[0].estat = 'F';
+            jobs_list[0].estat = 'F'; // TODO: això hauria de ser una N?
+            memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
         }
-        printf("reaper() --> Enterrado proceso con PID %d. \n", ended); 
 
+        DEBUG_PRINT("Fill finalitzat, estat: %d\n", ended);
+        DEBUG_PRINT("reaper() --> Enterrado proceso con PID %d. \n", ended);
     }
 }
 
-void ctrlc(int signum){
+void ctrlc(int signum) {
+    (void)signum; // signum = SIGINT és l'únic cas possible
+
     // ho tornam a posar perque a vegades quan acaba ctrlc es desasigna de SIGINT
     signal(SIGINT, ctrlc);
-    
-/*  
 
-TODO:
-
-Si (hay un proceso en foreground) entonces //jobs_list[0].pid > 0 
-
-    Si (el proceso en foreground NO es el mini shell) entonces  
-
-        //ya que puedo haber ejecutado el minishell  dentro del minishell 
-
-        enviarle la señal SIGTERM y provisionalmente notificarlo por pantalla. 
-
-    //si_no error ("Señal SIGTERM no enviada debido a que el proceso en foreground es el shell") 
-
-    fsi 
-
-    //si_no error ("Señal SIGTERM no enviada debido a que no hay proceso en foreground")
-
-fsi 
-
-*/
-    
+    if (jobs_list[0].pid > 0 && jobs_list[0].pid != getpid()) {
+        // si hi ha un procés en foreground i no som noltros mateixos
+        raise(SIGTERM); // però ara mateix això npi de com fer que vagi al procés que volem matar
+    }
+    /* TODO:
+     * Si (hay un proceso en foreground) entonces //jobs_list[0].pid > 0
+     *
+     *      Si (el proceso en foreground NO es el mini shell) entonces
+     *      // ya que puedo haber ejecutado el minishell  dentro del minishell
+     *
+     *		enviarle la señal SIGTERM y provisionalmente notificarlo por pantalla.
+     *
+     *		//si_no error ("Señal SIGTERM no enviada debido a que el proceso en
+     *		foreground es el shell")
+     *
+     *	    fsi
+     *
+     *      //si_no error ("Señal SIGTERM no enviada debido a que no hay
+     *      proceso en foreground")
+     * fsi
+     */
 }
 
 /*
@@ -469,15 +461,24 @@ fsi
  *
  */
 int launch_external(char **args) {
-    pid_t pid, wpid, ppid = 0;
-    int status;
+    pid_t pid;
 
     pid = fork(); /* a partir d'ara tenim 2 processos */
 
     if (pid == 0) { /* procés fill */
+                    // TODO:
+                    // Indicar con signal() que se ignorará la señal SIGINT2 (cuando
+                    // se pulse Ctrl+C, el padre ejecutará el manejador ctrlc y enviará una
+                    // señal de acción equivalente al hijo para abortarlo, SIGTERM,
+                    // mediante la función kill(), pero sólo si el comando se está
+                    // ejecutando en primer plano).
+
+#ifdef DEBUG
+        pid_t ppid = getppid();
+        DEBUG_PRINT("PID pare:\t%d\n", ppid);
+#endif
+
         /* execvp() executa els arguments */
-		ppid = getppid();
-		DEBUG_PRINT("PID pare:\t%d\n", ppid);
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: %s\n", args[0], strerror(errno));
             exit(EXIT_FAILURE); /* Si retorna, mata el fill */
@@ -485,18 +486,16 @@ int launch_external(char **args) {
     } else if (pid < 0) {
         /* -1 és un error de fork() */
         fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
+        // TODO: vol que faci exit() de tot si hi ha error?
         return MISHI_ERR;
     } else {
-        /* procés pare */
-
-        /* actualizam estats de jobs_list[0] */
+        /* procés pare: actualiza estats de jobs_list[0] */
         jobs_list[0].pid = pid;
         jobs_list[0].estat = 'E';
         memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
 
-
         /* Recorre todos los argumentos del cmd y mete espacios */
-		// TODO: enlloc d'això podem guardar la `line` inicial abans de ser dividida
+        // TODO: enlloc d'això podem guardar la `line` inicial abans de ser dividida
         for (int i = 0; args[i] != NULL; i++) {
             // TODO: strncat enlloc d strcat
             strcat(jobs_list[0].cmd, args[i]);
@@ -506,25 +505,11 @@ int launch_external(char **args) {
             }
         }
 
-		DEBUG_PRINT("PID fill: \t%d\n", pid);
-		DEBUG_PRINT("Comanda del fill en primer pla (jobs_list[0].cmd): %s\n", jobs_list[0].cmd);
+        DEBUG_PRINT("PID fill: \t%d\n", pid);
+        DEBUG_PRINT("Comanda del fill en primer pla (jobs_list[0].cmd): %s\n", jobs_list[0].cmd);
 
         /* procés pare, només espera que el fill acabi */
-        do {
-            wpid = waitpid(pid, &status, WUNTRACED);
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status) && wpid > 0);
-
-        if (wpid == -1) {
-            fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
-        }
-		
-        /* resetejam els valors de jobs_list[0] */
-        jobs_list[0].pid = 0;
-        jobs_list[0].estat = 'N';
-        memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
-
-		DEBUG_PRINT("Program name: %s\n", program_name);
-		DEBUG_PRINT("Fill finalitzat, estat: %d\n", wpid);
+        pause(); // espera a qualsevol senyal
     }
 
     return MISHI_OK;
