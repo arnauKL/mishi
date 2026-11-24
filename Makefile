@@ -9,7 +9,7 @@ INCLUDES= #.h
 PROGRAMS=nivel1 nivel2 nivel3 nivel4 #nivel5 nivel6 my_shell
 OBJS=$(SOURCES:.c=.o)
 
-all: $(OBJS) $(PROGRAMS)
+all: $(OBJS) $(PROGRAMS) #misleep contador
 
 #$(PROGRAMS): $(LIBRARIES) $(INCLUDES)
 #	$(CC) $(LDFLAGS) $(LIBRARIES) $@.o -o $@
@@ -37,6 +37,12 @@ nivel4: nivel4.o
 
 %.o: %.c $(INCLUDES)
 	$(CC) $(CFLAGS) -o $@ -c $<
+
+
+# misleep: misleep.c
+# 	$(CC) misleep.c -o misleep
+# contador: contador.c
+# 	$(CC) contador.c -o contador
 
 .PHONY: clean
 clean:

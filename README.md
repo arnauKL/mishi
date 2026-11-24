@@ -4,7 +4,7 @@
 
 ## Progrés
 
-Estam finalitzant `nivell3.c`
+Nivell 4 finalitzat.
 
 ## Instalar i compilar
 

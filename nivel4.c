@@ -22,8 +22,8 @@
 #include <unistd.h>
 
 /* =-------------------= configuracions =-------------------= */
-// TODO: eliminar clang-format BS x entrega
-// clang-format off
+/* TODO: eliminar clang-format x entrega */
+/* clang-format off */
 
 #define MISHI_OK     0
 #define MISHI_ERR    -1
@@ -36,7 +36,7 @@
 #define TOKEN_DELIMITER   " \t\r\n"
 
 /* Així podem activar/desactivar prints de debug fàcilment */
-//#define DEBUG
+#define DEBUG
 
 #define RED     "\x1b[31m"
 #define GREEN   "\x1b[32m"
@@ -68,24 +68,35 @@ typedef int (*builtin_fn)(char **);
  * struct per guardar builtins amb el nom p. ex. "cd" i la funció
  * interna p. ex "internal_cd"
  */
-struct builtin
-{
+struct builtin {
     char *name;
     builtin_fn func;
 };
 
-/* struct per guardar informació del job
- * char estat no estaria millor fer q sigui un ENUM?
+/*
+ * struct per guardar informació del job
  */
-struct info_job
-{
+struct info_job {
     pid_t pid;
-    char estat; // 'N': Ninguno, 'E': Ejecutándose y 'D': Detenido, 'F': Finalizado
-    char cmd[COMMAND_LINE_SIZE]; // línea de comand associada
+    char estat; /* guarda char d'estat (veure enum estat_job a continuació) */
+    char cmd[COMMAND_LINE_SIZE]; /* línea de comanda associada */
 };
 
-// TODO: veure si algo així pot ser útil
-// const char[] estats_possibles = {'N', 'E', 'D', 'F'};
+/*
+ * Enum amb tots els possibles estats pel struct info_job:
+ * 'N': Ningun, 'E': Executant-se, 'D': Detingut, 'F': Finalitzat
+ *
+ * Permet fer
+ * jobs_list[0].estat = FINALITZAT;
+ * Enlloc de
+ * jobs_list[0].estat = 'F';
+ */
+enum estat_job {
+     NINGUN = 'N',
+     EXECUTANT = 'E',
+     DETINGUT = 'D',
+     FINALITZAT='F',
+};
 
 /* =-------------------= prototips =-------------------= */
 int execute(char **args);
@@ -147,7 +158,7 @@ int main(int argc, const char **argv) {
 
     // instanciam `jobs_list` i inicialitzam `jobs_list[0]`
     jobs_list[0].pid = 0;
-    jobs_list[0].estat = 'N';
+    jobs_list[0].estat = NINGUN;
     memset(jobs_list[0].cmd, '\0',
            sizeof(jobs_list[0].cmd)); // emplena tots els espais de `jobs_list[0].cmd` amb '\0'
 
@@ -162,6 +173,14 @@ int main(int argc, const char **argv) {
         if (ptr == NULL) {
             if (feof(stdin)) {
                 internal_exit(NULL);
+            }
+
+            /* crec q el fgets() ens mata el shell quan feim C-c */
+            if (errno == EINTR) {
+                /* ha interromput un senyal, no és un error */
+                clearerr(stdin); // treim s error
+                printf("\n");
+                continue;
             }
 
             fprintf(stderr, "%s: %s\n", program_name, strerror(errno));
@@ -401,7 +420,7 @@ void reaper(int signum) {
     // ho tornam a posar perque a vegades quan acaba reaper es desasigna de SIGCHILD
     signal(SIGCHLD, reaper);
 
-    printf("reaper() --> Recibida señal %d.\n", signum); // la señal 17 es SIGCHILD
+    DEBUG_PRINT("reaper() --> Recibida señal %d.\n", signum); // el senyal 17 és SIGCHILD
 
     /* pid_t waitpid(pid_t pid, int *_Nullable wstatus, int options) waitpid
      * retorna el PID del procés que ha acabat WNOHANG fa que el procés no es
@@ -412,7 +431,8 @@ void reaper(int signum) {
 
         if (ended == jobs_list[0].pid) {
             jobs_list[0].pid = 0;
-            jobs_list[0].estat = 'F'; // TODO: això hauria de ser una N?
+            jobs_list[0].estat = FINALITZAT; /* a s enunciat demana que sigui estat
+                                         finalitzat */
             memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
         }
 
@@ -422,32 +442,34 @@ void reaper(int signum) {
 }
 
 void ctrlc(int signum) {
-    (void)signum; // signum = SIGINT és l'únic cas possible
+    (void)signum;          // signum = SIGINT és l'únic cas possible
+    signal(SIGINT, ctrlc); // x si es desassigna
 
-    // ho tornam a posar perque a vegades quan acaba ctrlc es desasigna de SIGINT
-    signal(SIGINT, ctrlc);
+    if (jobs_list[0].pid > 0) {
+        /* hi ha un procés en foreground */
 
-    if (jobs_list[0].pid > 0 && jobs_list[0].pid != getpid()) {
-        // si hi ha un procés en foreground i no som noltros mateixos
-        raise(SIGTERM); // però ara mateix això npi de com fer que vagi al procés que volem matar
+        if (strcmp(jobs_list[0].cmd, program_name) != 0) {
+            /* i no és el mateix minishell */
+
+            /* TODO:
+             * és possible que si es llança el minishell amb arguments, el que
+             * estigui a dins jobs_list[0].cmd no coincideixi amb el argv[0]
+             * (que és el que hi ha dins program_name). Pentura s'hauria de
+             * mirar només el primer token de jobs_list[0].cmd? */
+
+            DEBUG_PRINT("\nctrlc() --> enviant SIGTERM a %d (%s)\n", jobs_list[0].pid,
+                        jobs_list[0].cmd);
+
+            if (kill(jobs_list[0].pid, SIGTERM) == -1) {
+                fprintf(stderr, "%s: kill: %s\n", program_name, strerror(errno));
+            }
+        } else {
+            DEBUG_PRINT("\nSenyal SIGTERM (15) no enviada: el procés en foreground és el shell\n");
+        }
+    } else {
+        // TODO: ns si és necessari un error
+        DEBUG_PRINT("\nSenyal SIGTERM (15) no enviada: no hi ha cap procés en foreground\n");
     }
-    /* TODO:
-     * Si (hay un proceso en foreground) entonces //jobs_list[0].pid > 0
-     *
-     *      Si (el proceso en foreground NO es el mini shell) entonces
-     *      // ya que puedo haber ejecutado el minishell  dentro del minishell
-     *
-     *		enviarle la señal SIGTERM y provisionalmente notificarlo por pantalla.
-     *
-     *		//si_no error ("Señal SIGTERM no enviada debido a que el proceso en
-     *		foreground es el shell")
-     *
-     *	    fsi
-     *
-     *      //si_no error ("Señal SIGTERM no enviada debido a que no hay
-     *      proceso en foreground")
-     * fsi
-     */
 }
 
 /*
@@ -466,12 +488,14 @@ int launch_external(char **args) {
     pid = fork(); /* a partir d'ara tenim 2 processos */
 
     if (pid == 0) { /* procés fill */
-                    // TODO:
-                    // Indicar con signal() que se ignorará la señal SIGINT2 (cuando
-                    // se pulse Ctrl+C, el padre ejecutará el manejador ctrlc y enviará una
-                    // señal de acción equivalente al hijo para abortarlo, SIGTERM,
-                    // mediante la función kill(), pero sólo si el comando se está
-                    // ejecutando en primer plano).
+
+        // TODO:
+        // Indicar con signal() que se ignorará la señal SIGINT (cuando se
+        // pulse C-c, el padre ejecutará el manejador ctrlc y enviará una señal
+        // de acción equivalente al hijo para abortarlo, SIGTERM, mediante la
+        // función kill(), pero sólo si el comando se está ejecutando en primer
+        // plano).
+        signal(SIGINT, SIG_IGN);
 
 #ifdef DEBUG
         pid_t ppid = getppid();
@@ -491,7 +515,7 @@ int launch_external(char **args) {
     } else {
         /* procés pare: actualiza estats de jobs_list[0] */
         jobs_list[0].pid = pid;
-        jobs_list[0].estat = 'E';
+        jobs_list[0].estat = EXECUTANT;
         memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
 
         /* Recorre todos los argumentos del cmd y mete espacios */
@@ -509,7 +533,29 @@ int launch_external(char **args) {
         DEBUG_PRINT("Comanda del fill en primer pla (jobs_list[0].cmd): %s\n", jobs_list[0].cmd);
 
         /* procés pare, només espera que el fill acabi */
-        pause(); // espera a qualsevol senyal
+
+        // pause(); // espera a qualsevol senyal
+        //  ^^^^ crec q això pot fallar en el cas que l'usuari fa C-c:
+        //  Es fa C-c, el pare executa ctrlc, que fa kill(fill, SIGTERM) Aquest
+        //  pause ja retornaria xq espera a qualsevol senyal i n'acaba de rebre
+        //  un (SIGTERM). Llavors launch_external acaba i s'imprimeix el prompt
+        //  i torna a llegir. Es pot re-executar i encara no està buit el
+        //  jobs_list[0] xq el SIGCHLD tarda una mica més en arribar (quan el
+        //  fill processa el SIGTERM) i el reaper neteja el jobs_list[0]
+        //  després.
+        //  Pentura és overkill però crec q és millor?:
+        while (jobs_list[0].pid > 0) {
+            pause();
+        }
+
+        // Si des-pausea del SIGTERM, s'espera xq encara està jobs_list[0].pid
+        // != fins que el reaper ho fa net quan arriba el SIGCHLD.
+
+        // hi ha un altre problema tb i és q pentura SIGCHLD arriba abans de
+        // que el pare arribi fins al pause(), llavors el pare quedaria penjat
+        // esperant un SIGCHLD que ja ha arribat i no es des-pausejaria. Tb pot
+        // passar si arriba el SIGCHLD després de que es faci la comprovació
+        // del while (...) i abans del pause().
     }
 
     return MISHI_OK;
@@ -524,8 +570,10 @@ int print_prompt() {
     const char *user = getenv("USER");
     const char *home = getenv("HOME");
 
-    if (pwd == NULL) pwd = "";
-    if (user == NULL) user = "";
+    if (pwd == NULL)
+        pwd = "";
+    if (user == NULL)
+        user = "";
 
     if (home != NULL && strncmp(pwd, home, strlen(home)) == 0) {
         printf("[%s :: ~%s] $ ", user, pwd + strlen(home));
@@ -543,11 +591,10 @@ int print_prompt() {
 char *read_line(char *line) {
 
     print_prompt();
+    fflush(stdout);
 
     if (fgets(line, COMMAND_LINE_SIZE, stdin) == NULL) {
         /* si fgets() retorna NULL hi ha hagut un error o EOF */
-
-        printf("%s: %s\n", program_name, strerror(errno));
         return NULL;
     }
 
