@@ -1,13 +1,17 @@
 # Adaptat del Makefile de n'Adelaida
+
+# Comenta per eliminar missatges de debug de tots els nivells
+DEBUG = -DDEBUG 
+
 CC=gcc
-CFLAGS=-c -g -Wall -Wextra -Wpedantic -std=c17
-#LDFLAGS=-lreadline -Incurses #activar usar readline
+CFLAGS=-c -g -Wall -Wextra -Wpedantic -std=c17 $(DEBUG)
 
 SOURCES=nivel1.c nivel2.c nivel3.c nivel4.c nivel5.c #nivel6.c my_shell.c
 LIBRARIES= #.o
 INCLUDES= #.h
 PROGRAMS=nivel1 nivel2 nivel3 nivel4 nivel5 #nivel6 my_shell
 OBJS=$(SOURCES:.c=.o)
+NOM_CARPETA=cladera_deprez_volpe
 
 all: $(OBJS) $(PROGRAMS) #misleep contador
 
@@ -38,12 +42,12 @@ nivel5: nivel5.o
 %.o: %.c $(INCLUDES)
 	$(CC) $(CFLAGS) -o $@ -c $<
 
-
-# misleep: misleep.c
-# 	$(CC) misleep.c -o misleep
-# contador: contador.c
-# 	$(CC) contador.c -o contador
+# TODO: per facilitar entrega
+entrega: 
+	mkdir -p $(NOM_CARPETA)
+	cp nivel*.c $(NOM_CARPETA)/
+	tar -czvf $(NOM_CARPETA).tar.gz $(NOM_CARPETA)
 
 .PHONY: clean
 clean:
-	rm -rf *.o *~ *.tmp $(PROGRAMS)
+	rm -rf *.o *~ *.tmp $(PROGRAMS) $(NOM_CARPETA)

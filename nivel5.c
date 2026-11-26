@@ -35,9 +35,6 @@
 #define N_JOBS			  64
 #define TOKEN_DELIMITER   " \t\r\n"
 
-/* Així podem activar/desactivar prints de debug fàcilment */
-#define DEBUG
-
 #define RED     "\x1b[31m"
 #define GREEN   "\x1b[32m"
 #define BLUE    "\x1b[34m"
@@ -92,10 +89,10 @@ struct info_job {
  * jobs_list[0].estat = 'F';
  */
 enum estat_job {
-     NINGUN = 'N',
-     EXECUTANT = 'E',
-     DETINGUT = 'D',
-     FINALITZAT='F',
+     NINGUN     = 'N',
+     EXECUTANT  = 'E',
+     DETINGUT   = 'D',
+     FINALITZAT = 'F',
 };
 
 /* =-------------------= prototips =-------------------= */
@@ -118,8 +115,9 @@ int internal_jobs(char **args);
 int internal_source(char **args);
 
 /* signal handlers */
-void reaper(int signum);
 void ctrlc(int signum);
+void ctrlz(int signum);
+void reaper(int signum);
 
 /* =-------------------= globals =-------------------= */
 
@@ -140,6 +138,9 @@ unsigned int n_jobs = 0;
 
 /* nom del programa, es popula amb `argv[0]` a l'inici del programa */
 char program_name[COMMAND_LINE_SIZE];
+
+/* guarda una còpia de la línia original escrita per l'usuari */
+char orig_line[COMMAND_LINE_SIZE];
 
 // clang-format on
 /* =-------------------= implementacions =-------------------= */
@@ -168,6 +169,7 @@ int main(int argc, const char **argv) {
 
     // bucle principal
     while (1) {
+        /* emplenam `line` amb input d'usuari */
         char *ptr = read_line(line);
 
         if (ptr == NULL) {
@@ -175,7 +177,7 @@ int main(int argc, const char **argv) {
                 internal_exit(NULL);
             }
 
-            /* crec q el fgets() ens mata el shell quan feim C-c */
+            /* TODO: crec q el fgets() ens mata el shell quan feim C-c */
             if (errno == EINTR) {
                 /* ha interromput un senyal, no és un error */
                 clearerr(stdin); // treim s error
@@ -187,14 +189,17 @@ int main(int argc, const char **argv) {
             return MISHI_ERR; // fallo del fgets()
         }
 
+        /* copiam line original per tenir-la més tard (execute_line
+         * destrueix line) */
+        strncpy(orig_line, line, COMMAND_LINE_SIZE);
+
         DEBUG_PRINT("[read_line() -> ptr: %s]\n", ptr != NULL ? ptr : "(null)");
         DEBUG_PRINT("[read_line() -> line: %s]\n", line);
 
         status = execute_line(line);
 
         if (status == MISHI_ERR) {
-            // fprintf(stderr, "%s: hi ha hagut un error\n", program_name);
-            // return MISHI_ERR; /* no crec que faci falta sortir si cd falla */
+            fprintf(stderr, "%s: hi ha hagut un error\n", program_name);
         }
     }
 
@@ -441,6 +446,10 @@ void reaper(int signum) {
     }
 }
 
+/*
+ * handler per SIGINT (C-c):
+ * mata el fill en fg
+ */
 void ctrlc(int signum) {
     (void)signum;          // signum = SIGINT és l'únic cas possible
     signal(SIGINT, ctrlc); // x si es desassigna
@@ -449,13 +458,7 @@ void ctrlc(int signum) {
         /* hi ha un procés en foreground */
 
         if (strcmp(jobs_list[0].cmd, program_name) != 0) {
-            /* i no és el mateix minishell */
-
-            /* TODO:
-             * és possible que si es llança el minishell amb arguments, el que
-             * estigui a dins jobs_list[0].cmd no coincideixi amb el argv[0]
-             * (que és el que hi ha dins program_name). Pentura s'hauria de
-             * mirar només el primer token de jobs_list[0].cmd? */
+            /* i no és el mateix minishell: només comparam el argv[0] inicial, per tant ignoram arguments */
 
             DEBUG_PRINT("\nctrlc() --> enviant SIGTERM a %d (%s)\n", jobs_list[0].pid,
                         jobs_list[0].cmd);
@@ -467,9 +470,17 @@ void ctrlc(int signum) {
             DEBUG_PRINT("\nSenyal SIGTERM (15) no enviada: el procés en foreground és el shell\n");
         }
     } else {
-        // TODO: ns si és necessari un error
         DEBUG_PRINT("\nSenyal SIGTERM (15) no enviada: no hi ha cap procés en foreground\n");
     }
+}
+
+/*
+ * handler per SIGTSTP (C-z)
+ */
+void ctrlz(int signum) {
+    /*
+     *
+     */
 }
 
 /*
@@ -478,8 +489,9 @@ void ctrlc(int signum) {
  * si la comanda externa falla,
  * mostra missatge d'error per erno i fa un exit(-1)
  *
+ * TODO: actualitzar això en canviar-ho
  * actualitza les dades de jobs_list amb els del procés fill del foreground
- * fins que passem de nivell i poguem tenir més d'un fill (TODO)
+ * fins que passem de nivell i poguem tenir més d'un fill
  *
  */
 int launch_external(char **args) {
@@ -509,49 +521,22 @@ int launch_external(char **args) {
         // TODO: vol que faci exit() de tot si hi ha error?
         return MISHI_ERR;
     } else {
-        /* procés pare: actualiza estats de jobs_list[0] */
+        /* procés pare */ 
+
+        /* actualiza estats de jobs_list[0] */
         jobs_list[0].pid = pid;
         jobs_list[0].estat = EXECUTANT;
         memset(jobs_list[0].cmd, '\0', sizeof(jobs_list[0].cmd));
 
-        /* Recorre todos los argumentos del cmd y mete espacios */
-        // TODO: enlloc d'això podem guardar la `line` inicial abans de ser dividida
-        for (int i = 0; args[i] != NULL; i++) {
-            // TODO: strncat enlloc d strcat
-            strcat(jobs_list[0].cmd, args[i]);
-
-            if (args[i + 1] != NULL) {
-                strcat(jobs_list[0].cmd, " ");
-            }
-        }
+        /* Copiam cmd a dins la taula */
+        strncpy(jobs_list[0].cmd, orig_line, COMMAND_LINE_SIZE);
 
         DEBUG_PRINT("PID fill: \t%d\n", pid);
         DEBUG_PRINT("Comanda del fill en primer pla (jobs_list[0].cmd): %s\n", jobs_list[0].cmd);
 
-        /* procés pare, només espera que el fill acabi */
-
-        // pause(); // espera a qualsevol senyal
-        //  ^^^^ crec q això pot fallar en el cas que l'usuari fa C-c:
-        //  Es fa C-c, el pare executa ctrlc, que fa kill(fill, SIGTERM) Aquest
-        //  pause ja retornaria xq espera a qualsevol senyal i n'acaba de rebre
-        //  un (SIGTERM). Llavors launch_external acaba i s'imprimeix el prompt
-        //  i torna a llegir. Es pot re-executar i encara no està buit el
-        //  jobs_list[0] xq el SIGCHLD tarda una mica més en arribar (quan el
-        //  fill processa el SIGTERM) i el reaper neteja el jobs_list[0]
-        //  després.
-        //  Pentura és overkill però crec q és millor?:
         while (jobs_list[0].pid > 0) {
             pause();
         }
-
-        // Si des-pausea del SIGTERM, s'espera xq encara està jobs_list[0].pid
-        // != fins que el reaper ho fa net quan arriba el SIGCHLD.
-
-        // hi ha un altre problema tb i és q pentura SIGCHLD arriba abans de
-        // que el pare arribi fins al pause(), llavors el pare quedaria penjat
-        // esperant un SIGCHLD que ja ha arribat i no es des-pausejaria. Tb pot
-        // passar si arriba el SIGCHLD després de que es faci la comprovació
-        // del while (...) i abans del pause().
     }
 
     return MISHI_OK;
